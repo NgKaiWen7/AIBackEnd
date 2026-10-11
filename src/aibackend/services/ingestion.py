@@ -59,66 +59,49 @@ async def memory_card(book_id: str, db: AsyncSession):
     stmt = (
         select(Book_db)
         .options(
-            selectinload(Book_db.chapters).selectinload(BookChapter_db.memory_cards)
+            selectinload(Book_db.chapters)
+            .selectinload(BookChapter_db.chunks)
+            .selectinload(BookChunks_db.memory_cards)
         )
         .where(Book_db.id == book_id)
     )
     book = await db.scalar(stmt)
     if book is None:
         raise ValueError(f"Book {book_id} not found")
-    chapters = []
     for chapter in book.chapters:
-        chapters.append(
-            {
-                "id": chapter.id,
-                "title": chapter.title,
-                "content": chapter.content or "",
-            }
-        )
-        chapter.memory_cards.clear()
-    await db.flush()
-    await db.commit()
-    for chapter in chapters:
-        chapter_id = chapter["id"]
-        chapter_title = chapter["title"]
-        chapter_content = chapter["content"]
-        chunks = chunk_text(chapter_content, chunk_size=10_000, overlap=2_000)
-        for i, chunk in enumerate(chunks):
-            logger.info(
-                "Starting book ingestion: chunk=%s for chapter=%s", i, chapter_title
-            )
+        for chunk in chapter.chunks:
+            chunk.memory_cards.clear()
+            await db.flush()
             system_prompt = MEMORY_CARD_PROMPT.format(
-                book_title=chapter_title, chapter_title=chapter_title
+                book_title=book.title, chapter_title=chapter.title
             )
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": chunk},
+                {"role": "user", "content": chunk.raw_text},
             ]
             json_format = MemoryCardSchema.model_json_schema()
-            response = ollama.chat(
-                model="qwen3.5:9b",
-                messages=messages,
-                think=False,
-                format=json_format,
-                options={"temperature": 0.5},
-            )
-            content = response["message"]["content"]
             try:
+                response = ollama.chat(
+                    model="qwen3.5:9b",
+                    messages=messages,
+                    think=False,
+                    format=json_format,
+                    options={"temperature": 0.5},
+                )
+                content = response["message"]["content"]
                 cards = MemoryCardSchema.model_validate_json(
                     json_repair.repair_json(content)
                 )
                 for card in cards.cards:
                     db_memory_card = MemoryCardDB(
-                        chapter_id=chapter_id,
                         question=card.question,
                         answer=card.answer,
                         keypoint=card.keypoint,
                     )
-
-                    db.add(db_memory_card)
-                    await db.commit()
+                    chunk.memory_cards.append(db_memory_card)
+                await db.commit()
             except ValidationError as e:
-                print(f"Pydantic validation failed: {e}, chunk {i + 1}")
+                print(f"Pydantic validation failed: {e}, chunk {chunk.id}")
                 await db.rollback()
                 continue
     return "OK"

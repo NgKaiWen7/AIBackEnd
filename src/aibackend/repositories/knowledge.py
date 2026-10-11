@@ -104,7 +104,7 @@ class MemoryCard(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
-    chapter_id: Mapped[int] = mapped_column(
+    chunk_id: Mapped[int] = mapped_column(
         ForeignKey("book_chunks.id", ondelete="CASCADE"), index=True
     )
     question: Mapped[str] = mapped_column(Text)
