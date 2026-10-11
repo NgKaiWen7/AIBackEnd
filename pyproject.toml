@@ -1,0 +1,30 @@
+[project]
+name = "aibackend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { email = "ngkaiwen7@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.20.0",
+    "asyncpg>=0.32.0",
+    "docstring-parser>=0.18.0",
+    "fastapi>=0.143.0",
+    "json-repair>=0.63.5",
+    "ollama>=0.6.3",
+    "pgvector>=0.5.1",
+    "psycopg[binary]>=3.3.6",
+    "pymupdf>=1.28.2",
+    "python-multipart>=0.0.32",
+    "sqlalchemy[asyncio]>=2.1.4",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+aibackend = "aibackend:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
