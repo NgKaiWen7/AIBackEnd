@@ -3,26 +3,29 @@ from pathlib import Path
 
 import json_repair
 import ollama
-from fastapi import UploadFile
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from aibackend.models.graph import ExtractionResult
 from aibackend.models.knowledge import MemoryCards as MemoryCardSchema
-from aibackend.prompts.memory_card import PROMPT
+from aibackend.prompts.graph_ingestion import PROMPT as GRAPH_PROMPT
+from aibackend.prompts.memory_card import PROMPT as MEMORY_CARD_PROMPT
 from aibackend.repositories.knowledge import Book as Book_db
 from aibackend.repositories.knowledge import BookChapter as BookChapter_db
+from aibackend.repositories.knowledge import BookChunks as BookChunks_db
 from aibackend.repositories.knowledge import MemoryCard as MemoryCardDB
 from aibackend.utils.chunk import chunk_text
-from aibackend.utils.pdf import get_chapters, get_title
+from aibackend.utils.pdf import get_chapters
 
 logger = logging.getLogger(__name__)
+
 
 async def ingest_book(book_id: str, db: AsyncSession):
     stmt = (
         select(Book_db)
-        .options(selectinload(Book_db.chapters))
+        .options(selectinload(Book_db.chapters).selectinload(BookChapter_db.chunks))
         .where(Book_db.id == book_id)
     )
     result = await db.execute(stmt)
@@ -35,21 +38,20 @@ async def ingest_book(book_id: str, db: AsyncSession):
     for chapter_number, (chapter_title, content) in enumerate(
         chapters.items(), start=1
     ):
-        book.chapters.append(
-            BookChapter_db(
-                chapter_number=chapter_number,
-                title=chapter_title,
-                content=(content or "").replace("\x00", ""),
-            )
+        bookchapter_db = BookChapter_db(
+            chapter_number=chapter_number, title=chapter_title
         )
+        chunks = chunk_text(content, chunk_size=1000, overlap=200)
+        for i, chunk in enumerate(chunks):
+            bookchunk_db = BookChunks_db(raw_text=chunk, position=i)
+            bookchapter_db.chunks.append(bookchunk_db)
+        book.chapters.append(bookchapter_db)
 
     await db.commit()
     await db.refresh(book)
 
     return {
         "book_id": book.id,
-        "title": book.title,
-        "chapters_saved": len(chapters),
     }
 
 
@@ -85,7 +87,7 @@ async def memory_card(book_id: str, db: AsyncSession):
             logger.info(
                 "Starting book ingestion: chunk=%s for chapter=%s", i, chapter_title
             )
-            system_prompt = PROMPT.format(
+            system_prompt = MEMORY_CARD_PROMPT.format(
                 book_title=chapter_title, chapter_title=chapter_title
             )
             messages = [
@@ -120,3 +122,17 @@ async def memory_card(book_id: str, db: AsyncSession):
                 await db.rollback()
                 continue
     return "OK"
+
+
+async def graph(book_id: str, db: AsyncSession):
+    response = ollama.chat(
+        model="qwen3.5:9b",
+        messages=[
+            {"role": "system", "content": GRAPH_PROMPT},
+            {"role": "user", "content": chunk},
+        ],
+        format=ExtractionResult.model_json_schema(),
+        options={"temperature": 0},
+    )
+
+    return ExtractionResult.model_validate_json(response.message.content)
