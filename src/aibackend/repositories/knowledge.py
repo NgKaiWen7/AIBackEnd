@@ -90,7 +90,7 @@ class BookChunks(Base):
     )
     position: Mapped[int] = mapped_column(Integer)
     raw_text: Mapped[Text] = mapped_column(Text, nullable=True)
-    embeddings: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
+    embeddings: Mapped[list[float] | None] = mapped_column(Vector(4096), nullable=True)
     chapters: Mapped["BookChapter"] = relationship(back_populates="chunks")
     memory_cards: Mapped[list["MemoryCard"]] = relationship(
         back_populates="chunks", cascade="all, delete-orphan"
