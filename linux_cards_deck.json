@@ -1,0 +1,182 @@
+{
+  "deck": "Linux World",
+  "style": "cute student notebook doodle illustration, cream graph paper, pastel highlighter accents, hand-drawn arrows and stars, friendly cartoon librarian cat, charming imperfect pen strokes, leave generous clean blank space for text, no letters, no words, no numbers, no typography",
+  "categories": {
+    "files": "#2f6fdb",
+    "access": "#d6403a",
+    "text": "#3a9a4a",
+    "process": "#7a46c8",
+    "network": "#1f9a9a",
+    "system": "#e08a1e"
+  },
+  "cards": [
+    {
+      "id": "ls",
+      "category": "files",
+      "title": "ls",
+      "tagline": "Lists what is inside a folder",
+      "facts": [
+        "Syntax: ls [options] [path]",
+        "-l long format (permissions, owner, size, date)",
+        "-a show hidden files (names starting with a dot)",
+        "-h human-readable sizes (with -l)  |  -t newest first",
+        "Try: ls -lah"
+      ],
+      "image_prompt": "A friendly cartoon librarian cat standing beside a tall wooden cabinet full of small drawers. Most drawers are open and show color-coded tabs and tiny size and date icons. A few drawers at the bottom are tucked behind a curtain marked with a little ghost icon, to show hidden files. The cat holds a clipboard with wavy lines instead of readable writing."
+    },
+    {
+      "id": "cd",
+      "category": "files",
+      "title": "cd / paths",
+      "tagline": "Move around the folder tree",
+      "facts": [
+        "Absolute path starts at the root: /home/me",
+        "~ is your home folder  |  .. is the parent folder",
+        "cd - jumps back to the previous folder",
+        "pwd prints where you are now",
+        "Try: cd ~/projects && pwd"
+      ],
+      "image_prompt": "A cartoon fox hiker standing on a branch of a huge tree whose thick base at the bottom is the root. Beside the fox is a signpost with three arrow boards: one pointing down to the roots, one with a small house icon pointing home, and one with an upward arrow pointing to the parent branch."
+    },
+    {
+      "id": "chmod",
+      "category": "access",
+      "title": "chmod",
+      "tagline": "Decides who can read, write and run a file",
+      "facts": [
+        "Bits: r = 4, w = 2, x = 1 (add them up)",
+        "Order: owner, group, others  |  755 = rwxr-xr-x",
+        "644 = rw-r--r--  (normal file)",
+        "chmod +x script.sh makes a file runnable",
+        "Try: chmod 755 deploy.sh"
+      ],
+      "image_prompt": "A cartoon treasure chest with a control panel made of three rows of switches. Each row has a symbol on the left: a crown for the owner, two little people for the group, a globe for everyone else. Each row has three round buttons: an eye icon for read, a pencil icon for write, and a play-button icon for execute. In the crown row all three buttons glow green. In the other two rows the eye and play buttons glow green and the pencil button is dark."
+    },
+    {
+      "id": "grep",
+      "category": "text",
+      "title": "grep",
+      "tagline": "Finds lines that match a pattern",
+      "facts": [
+        "Syntax: grep [options] pattern [file]",
+        "-i ignore case  |  -n show line numbers",
+        "-r search folders recursively  |  -v invert (lines that do NOT match)",
+        "-c count matching lines",
+        "Try: grep -rn 'error' /var/log"
+      ],
+      "image_prompt": "A cute brown bear wearing a detective hat holds a giant magnifying glass over a long paper scroll covered in faded gray wavy lines. A few lines glow bright yellow and are being lifted out through the magnifying glass, while all the other lines stay dim and gray."
+    },
+    {
+      "id": "pipe",
+      "category": "text",
+      "title": "| pipe",
+      "tagline": "Feeds one command's output into the next",
+      "facts": [
+        "cmd1 | cmd2 sends stdout of cmd1 to stdin of cmd2",
+        "Chain as many as you like",
+        "Each tool does one small job well",
+        "Try: ps aux | grep nginx",
+        "Try: ls | wc -l  (count files)"
+      ],
+      "image_prompt": "Two cartoon machines connected by a big transparent pipe. The left machine pushes a stream of small cubes in many colors into the pipe. At the right end of the pipe a funnel-shaped filter machine catches only the red cubes into a basket, while the other cubes fall away."
+    },
+    {
+      "id": "redirect",
+      "category": "text",
+      "title": "> and >>",
+      "tagline": "Send output into a file instead of the screen",
+      "facts": [
+        "> overwrites the file (old content is lost)",
+        ">> appends to the end of the file",
+        "< reads input from a file  |  2> captures errors only",
+        "&> captures output and errors together (bash)",
+        "Try: echo done >> log.txt"
+      ],
+      "image_prompt": "A picture split into two halves. In the top half a funnel pours colored liquid onto a notebook page while a big pink eraser wipes the old writing away, with a single arrow. In the bottom half the same funnel pours liquid onto a fresh blank page after several already filled pages, with a double arrow."
+    },
+    {
+      "id": "kill",
+      "category": "process",
+      "title": "kill",
+      "tagline": "Asks a process to stop, politely or by force",
+      "facts": [
+        "Find the PID first: ps aux or top (press q to quit)",
+        "kill PID sends SIGTERM (15): please clean up and exit",
+        "kill -9 PID sends SIGKILL: cannot be caught or ignored",
+        "Ctrl+C sends SIGINT (2) to the foreground program",
+        "Try: kill 4242  then  kill -9 4242 only if stuck"
+      ],
+      "image_prompt": "A picture split into two halves. On the left a polite ninja panda gently taps a small robot worker on the shoulder, and the robot tidies its desk and waves goodbye. On the right the same panda slams a big red button and the robot drops instantly through a trapdoor, leaving a messy desk behind."
+    },
+    {
+      "id": "sudo",
+      "category": "access",
+      "title": "sudo",
+      "tagline": "Runs one command with root power",
+      "facts": [
+        "Syntax: sudo command",
+        "Asks for YOUR password, not root's",
+        "Allowed users are listed in /etc/sudoers (edit with visudo)",
+        "sudo !! repeats the last command with sudo",
+        "Rule: use the least power you need"
+      ],
+      "image_prompt": "A chubby cartoon penguin in a small red cape holding one huge golden master key that opens a wall of many locked doors, one door glowing and open. On the floor beside him lies a small ordinary keycard that opens only a single door, for contrast. The penguin looks careful and responsible."
+    },
+    {
+      "id": "tar",
+      "category": "network",
+      "title": "tar",
+      "tagline": "Bundles many files into one archive",
+      "facts": [
+        "c create  |  x extract  |  t list contents",
+        "z gzip compression  |  v verbose  |  f file name (put f last)",
+        "Create: tar -czvf backup.tar.gz mydir/",
+        "Extract: tar -xzvf backup.tar.gz",
+        "-C /path extracts into another folder"
+      ],
+      "image_prompt": "A cartoon octopus using its arms to pack many loose books, files and photos into one cardboard box, with one arm pressing the lid down with a squeezing press to show compression and another arm taping the box shut. Beside it a second small octopus unpacks an identical box."
+    },
+    {
+      "id": "ssh",
+      "category": "network",
+      "title": "ssh",
+      "tagline": "Logs in to another computer, securely",
+      "facts": [
+        "Syntax: ssh user@host  (default port 22)",
+        "-p port  |  -i path to your private key",
+        "ssh-keygen -t ed25519 makes a key pair",
+        "Public key goes in ~/.ssh/authorized_keys on the server",
+        "Never share your PRIVATE key"
+      ],
+      "image_prompt": "Two cartoon houses on distant hills connected by a glowing armored tunnel running under the ground. A person at the left house holds a large ornate key. The door of the right house has a matching padlock hanging on it. A small penguin stands at the tunnel entrance as a guard."
+    },
+    {
+      "id": "df-du",
+      "category": "system",
+      "title": "df / du",
+      "tagline": "How full is the disk, and who is hogging it",
+      "facts": [
+        "df = Disk Free: space per filesystem (the whole container)",
+        "du = Disk Usage: space used by files and folders",
+        "-h human-readable sizes for both",
+        "Try: df -h",
+        "Try: du -sh * | sort -h"
+      ],
+      "image_prompt": "A large cartoon water bottle used as a gauge, filled about two thirds full, standing next to a pile of moving boxes on a weighing scale. A magnifying glass hovers over the heaviest box. The bottle shows the whole container while the scale weighs a single box."
+    },
+    {
+      "id": "fhs",
+      "category": "system",
+      "title": "/ the tree",
+      "tagline": "Where Linux keeps everything",
+      "facts": [
+        "/ is the root of everything",
+        "/home user files  |  /etc configuration",
+        "/var changing data (logs in /var/log)",
+        "/bin and /usr programs  |  /tmp temporary files",
+        "/dev devices  |  /proc live process info"
+      ],
+      "image_prompt": "A big friendly cartoon tree whose trunk is the root of the whole file system. Each branch holds a different object: a small house, a gear, an open ledger book with a pen, a toolbox, a little trash can for temporary things, and a plug with a USB stick for devices."
+    }
+  ]
+}

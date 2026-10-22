@@ -38,9 +38,10 @@ async def embed(book_id: str, db: AsyncSession):
 
     for chapter in book.chapters:
         for chunk in chapter.chunks:
-            chunk.embeddings = await get_embedding(chunk.raw_text)
+            if len(chunk.raw_text) > 0:
+                chunk.embeddings = await get_embedding(chunk.raw_text)
 
-    await db.commit()
+        await db.commit()
 
 
 def rerank(query: str, documents: list[str]) -> list[tuple[int, float]]:

@@ -1,4 +1,5 @@
 import logging
+import unicodedata
 from pathlib import Path
 
 from sqlalchemy import select
@@ -12,6 +13,22 @@ from aibackend.utils.chunk import chunk_text
 from aibackend.utils.pdf import get_chapters
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_text(text: str | None) -> str | None:
+    if text is None:
+        return None
+
+    # Remove null bytes that PostgreSQL cannot store.
+    text = text.replace("\x00", "")
+
+    # Normalize equivalent Unicode representations.
+    text = unicodedata.normalize("NFC", text)
+
+    # Remove leading/trailing whitespace.
+    text = text.strip()
+
+    return text
 
 
 async def ingest_book(book_id: str, db: AsyncSession):
@@ -31,11 +48,11 @@ async def ingest_book(book_id: str, db: AsyncSession):
         chapters.items(), start=1
     ):
         bookchapter_db = BookChapter_db(
-            chapter_number=chapter_number, title=chapter_title
+            chapter_number=chapter_number, title=normalize_text(chapter_title)
         )
         chunks = chunk_text(content, chunk_size=1000, overlap=200)
         for i, chunk in enumerate(chunks):
-            bookchunk_db = BookChunks_db(raw_text=chunk, position=i)
+            bookchunk_db = BookChunks_db(raw_text=normalize_text(chunk), position=i)
             bookchapter_db.chunks.append(bookchunk_db)
         book.chapters.append(bookchapter_db)
 
