@@ -5,3 +5,7 @@
 .venv/
 .env
 models/**
+vue/**
+browser_agent_output/**
+my_profile/**
+ys_profile/**
