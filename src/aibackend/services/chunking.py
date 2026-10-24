@@ -1,62 +1,66 @@
 import logging
 import unicodedata
 from pathlib import Path
+from uuid import UUID
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from aibackend.repositories.knowledge import Book as Book_db
-from aibackend.repositories.knowledge import BookChapter as BookChapter_db
-from aibackend.repositories.knowledge import BookChunks as BookChunks_db
+from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.utils.chunk import chunk_text
 from aibackend.utils.pdf import get_chapters
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_text(text: str | None) -> str | None:
-    if text is None:
+def normalize_text(value: str | None) -> str | None:
+    if value is None:
         return None
-
-    # Remove null bytes that PostgreSQL cannot store.
-    text = text.replace("\x00", "")
-
-    # Normalize equivalent Unicode representations.
-    text = unicodedata.normalize("NFC", text)
-
-    # Remove leading/trailing whitespace.
-    text = text.strip()
-
-    return text
+    return unicodedata.normalize("NFC", value.replace("\x00", "")).strip()
 
 
-async def ingest_book(book_id: str, db: AsyncSession):
-    stmt = (
-        select(Book_db)
-        .options(selectinload(Book_db.chapters).selectinload(BookChapter_db.chunks))
-        .where(Book_db.id == book_id)
-    )
-    result = await db.execute(stmt)
-    book: Book_db = result.scalar_one()
-    book.chapters.clear()
-    await db.flush()
-    pdf_path = Path("/mnt") / book.source.lstrip("/")
-    chapters: dict[str, str] = get_chapters(pdf_path)
+async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
+    repo = BookChunkRepository(db)
 
-    for chapter_number, (chapter_title, content) in enumerate(
-        chapters.items(), start=1
-    ):
-        bookchapter_db = BookChapter_db(
-            chapter_number=chapter_number, title=normalize_text(chapter_title)
-        )
-        chunks = chunk_text(content, chunk_size=1000, overlap=200)
-        for i, chunk in enumerate(chunks):
-            bookchunk_db = BookChunks_db(raw_text=normalize_text(chunk), position=i)
-            bookchapter_db.chunks.append(bookchunk_db)
-        book.chapters.append(bookchapter_db)
+    try:
+        book = await repo.get_book(book_id)
+        if book is None:
+            raise ValueError(f"Book not found: {book_id}")
 
-    await db.commit()
-    await db.refresh(book)
+        pdf_path = Path("/mnt") / book["source"].lstrip("/")
+        chapters = get_chapters(pdf_path)
 
-    return {"book_id": book.id}
+        await repo.delete_chapters(book_id)
+
+        chapter_count = 0
+        chunk_count = 0
+
+        for chapter_number, (title, content) in enumerate(chapters.items(), start=1):
+            chapter_id = await repo.create_chapter(
+                book_id=book_id,
+                chapter_number=chapter_number,
+                title=normalize_text(title) or "",
+            )
+            chapter_count += 1
+
+            for position, chunk in enumerate(
+                chunk_text(content, chunk_size=1000, overlap=200)
+            ):
+                await repo.create_chunk(
+                    chapter_id=chapter_id,
+                    position=position,
+                    raw_text=normalize_text(chunk),
+                )
+                chunk_count += 1
+
+        await repo.commit()
+
+        return {
+            "book_id": book_id,
+            "chapter_count": chapter_count,
+            "chunk_count": chunk_count,
+        }
+
+    except Exception:
+        await repo.rollback()
+        logger.exception("Failed to ingest book %s", book_id)
+        raise

@@ -1,11 +1,1 @@
-**/__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.venv/
-.env
-models/**
-vue/**
-browser_agent_output/**
-my_profile/**
-ys_profile/**
+**/__pycache__/**
