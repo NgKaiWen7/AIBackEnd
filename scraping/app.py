@@ -85,16 +85,25 @@ DOWNLOAD_BUTTON_SELECTOR = os.getenv(
 # Shared visual style for every card. Keep the card-specific teaching content
 # and visual brief in each JSON concept's content and image_prompt fields.
 STYLE_PROMPT = """
-Create one polished, self-contained technical memory card for an experienced
-software/AI engineer. Use a consistent professional editorial design, clear
-visual hierarchy, precise technical diagrams, restrained colors, a clean
-background, and high-contrast readable typography. Prefer meaningful diagrams,
-annotated data flow, SQL/code panels, tables, or equations when they explain the
-concept. Avoid decorative stock imagery, visual clutter, fake UI, and unrelated
-illustrations. Use the supplied title and preserve the supplied technical
-content, terminology, identifiers, SQL, code, and equations accurately. Do not
-invent APIs, code, results, or claims. Do not combine this concept with other
-cards. Fit the material to a single card and use the space efficiently.
+Create a polished, self-contained technical memory card for an experienced
+software/AI engineer.
+
+STYLE
+- Professional technical editorial design.
+- Clean background, restrained colors, and strong visual hierarchy.
+- Large, readable title and clearly organized technical content.
+- Use diagrams, annotated workflows, equations, tables, and code panels
+  where they improve understanding.
+- Prefer information-dense layouts with efficient use of space.
+- Keep typography, spacing, colors, and visual language consistent across cards.
+- Avoid decorative imagery, unrelated illustrations, clutter, and fake UI.
+
+ACCURACY
+- Preserve technical terminology, identifiers, code, SQL, operators,
+  equations, and command syntax exactly.
+- Do not invent APIs, results, examples, or technical claims.
+- Explain only the supplied concept. Do not merge unrelated concepts.
+- Make the card understandable independently of other cards.
 """.strip()
 
 
@@ -172,49 +181,38 @@ def validate_cards(data: Any) -> dict[str, Any]:
 
     return {"topic": topic, "concepts": validated_concepts}
 
+def build_prompts(data: dict) -> list[str]:
+    """Build one standalone image-generation prompt per concept."""
+    data = validate_cards(data)
+    topic = data["topic"].strip()
+    prompts = []
 
-def build_prompts(data: dict[str, Any]) -> list[str]:
-    """Create one complete image-generation prompt per concept, in input order."""
-    cards = validate_cards(data)
-    topic = cards["topic"]
-    prompts: list[str] = []
-
-    for concept in cards["concepts"]:
+    for concept in data["concepts"]:
         prompt = f"""{STYLE_PROMPT}
 
-        STRICT OUTPUT REQUIREMENT — IMAGE ONLY
-        Generate exactly ONE finished image.
-        The response must be an image, not a text answer.
-        Do not return explanations, descriptions, Markdown, code fences,
-        captions, confirmations, or any other text outside the image.
-        Do not describe what the image would look like. Render the image itself.
+TOPIC
+{topic}
 
-        TOPIC
-        {topic}
+CARD TITLE
+{concept["title"]}
 
-        CARD TITLE
-        {concept["title"]}
+CARD CONTENT
+Preserve the technical information and code accurately.
 
-        CARD CONTENT — preserve the technical information and code accurately
-        {concept["content"]}
+{concept["content"]}
 
-        VISUAL EXPLANATION — use this as the specific diagram/illustration brief
-        {concept["image_prompt"]}
+VISUAL EXPLANATION
+Use this as the specific diagram or illustration brief.
 
-        RENDERING REQUIREMENTS
-        1. Render a single finished memory card for this one concept.
-        2. Make the title and important technical details legible.
-        3. Preserve exact code identifiers, SQL, operators, equations,
-           and command syntax from the card content.
-        4. Use the visual explanation to determine the main diagram.
-        5. Ensure diagram labels correspond to the supplied content.
-        6. Do not add extra sections, unrelated concepts, or invented technical details.
+{concept["image_prompt"]}
 
-        FINAL OUTPUT CONSTRAINT — MANDATORY
-        OUTPUT: ONE IMAGE ONLY.
-        Do not output text instead of an image.
-        Do not prepend or append any text to the generated image.
-        """
+Render one finished technical memory card for this concept.
+Use the supplied title, content, and visual explanation as the source of truth.
+Make important technical details legible and ensure diagram labels match
+the supplied content.
+
+Return the finished image only, without accompanying text.
+"""
         prompts.append(prompt)
 
     return prompts
