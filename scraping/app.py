@@ -74,13 +74,7 @@ WAIT_FOR_LOGIN = os.getenv("GEMINI_WAIT_FOR_LOGIN", "1").strip().lower() not in 
 # Override this with GEMINI_DOWNLOAD_BUTTON_SELECTOR if the website's markup
 # changes. The default targets controls whose accessible label/title contains
 # "download" (case-insensitive).
-DOWNLOAD_BUTTON_SELECTOR = os.getenv(
-    "GEMINI_DOWNLOAD_BUTTON_SELECTOR",
-    'button[aria-label*="download" i], '
-    'button[title*="download" i], '
-    '[role="button"][aria-label*="download" i], '
-    'a[aria-label*="download" i]',
-)
+DOWNLOAD_BUTTON_SELECTOR = 'md-icon-button.download-button[data-aria-label="Download image"]'
 
 # Shared visual style for every card. Keep the card-specific teaching content
 # and visual brief in each JSON concept's content and image_prompt fields.
@@ -242,43 +236,27 @@ def downloads(page: Page, output_dir: Path, prompt_index: int = 1) -> bool:
     output_dir.mkdir(parents=True, exist_ok=True)
     buttons = page.locator(DOWNLOAD_BUTTON_SELECTOR)
 
-    try:
-        count = buttons.count()
-    except Exception:
-        return False
+    count = buttons.count()
 
     for button_index in range(count):
         button = buttons.nth(button_index)
-
-        try:
-            if not button.is_visible() or not button.is_enabled():
-                continue
-
-            with page.expect_download(timeout=3000) as download_info:
-                button.evaluate("(el) => el.click()")
-
-            download = download_info.value
-            suggested_name = Path(download.suggested_filename).name
-            filename = suggested_name or f"image_{button_index + 1}.png"
-            # Ensure the output path stays a direct child of this job's directory.
-            filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", filename).strip(" .")
-            if not filename:
-                filename = f"image_{button_index + 1}.png"
-
-            save_path = output_dir / (
-                f"prompt_{prompt_index:03d}_download_{button_index + 1:02d}_{filename}"
-            )
-            download.save_as(save_path)
-
-            if not save_path.is_file() or save_path.stat().st_size == 0:
-                raise RuntimeError(f"Downloaded file is missing or empty: {save_path}")
-
-            logger.info("Saved image: %s", save_path)
-            return True
-
-        except PlaywrightTimeoutError:
-            # This control did not trigger a download. Check the next one.
-            continue
+        with page.expect_download() as download_info:
+            button.evaluate("(el) => el.click()")
+        download = download_info.value
+        suggested_name = Path(download.suggested_filename).name
+        filename = suggested_name or f"image_{button_index + 1}.png"
+        # Ensure the output path stays a direct child of this job's directory.
+        filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", filename).strip(" .")
+        if not filename:
+            filename = f"image_{button_index + 1}.png"
+        save_path = output_dir / (
+            f"prompt_{prompt_index:03d}_download_{button_index + 1:02d}_{filename}"
+        )
+        download.save_as(save_path)
+        if not save_path.is_file() or save_path.stat().st_size == 0:
+            raise RuntimeError(f"Downloaded file is missing or empty: {save_path}")
+        logger.info("Saved image: %s", save_path)
+        return True
 
     return False
 
@@ -306,12 +284,8 @@ def generate_images_in_session(
         try:
             submit_prompt(page, prompt)
             deadline = time.monotonic() + PROMPT_TIMEOUT_SECONDS
-
-            while time.monotonic() < deadline:
-                if downloads(page, output_dir, index):
-                    success = True
-                    break
-                page.wait_for_timeout(1500)
+            while not success and time.monotonic() < deadline:
+                success = downloads(page, output_dir, index)
 
         except Exception:
             logger.exception("Prompt %s failed during initial generation", index)
@@ -348,13 +322,11 @@ def generate_images_in_session(
 
         try:
             submit_prompt(page, prompt)
-            deadline = time.monotonic() + RETRY_TIMEOUT_SECONDS
+            deadline = time.monotonic() + PROMPT_TIMEOUT_SECONDS
 
-            while time.monotonic() < deadline:
-                if downloads(page, output_dir, index):
-                    success = True
-                    break
-                page.wait_for_timeout(1500)
+            while not success and time.monotonic() < deadline:
+                success = downloads(page, output_dir, index)
+
 
         except Exception:
             logger.exception("Retry failed for prompt %s", index)
