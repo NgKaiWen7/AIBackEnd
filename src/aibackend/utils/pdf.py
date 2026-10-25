@@ -23,9 +23,3 @@ def get_chapters(pdf_path: str | Path) -> dict[str, str]:
 
     doc.close()
     return chapters
-
-
-def get_title(pdf_bytes: bytes) -> str:
-    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
-        metadata = doc.metadata
-        return metadata.get("title") or ""

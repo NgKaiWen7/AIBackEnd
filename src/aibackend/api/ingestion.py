@@ -9,10 +9,7 @@ from aibackend.services.chunking import ingest_book
 from aibackend.services.embedding import embed
 from aibackend.services.memory_card import memory_card
 
-router = APIRouter(
-    prefix="/ingestion",
-    tags=["ingestion"],
-)
+router = APIRouter()
 
 
 @router.post("/ingest-book")

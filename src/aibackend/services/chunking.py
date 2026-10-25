@@ -1,21 +1,14 @@
 import logging
-import unicodedata
 from pathlib import Path
 from uuid import UUID
 
+import pymupdf4llm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aibackend.models.chunking import Book, Chunk
 from aibackend.repositories.book_chunks import BookChunkRepository
-from aibackend.utils.chunk import chunk_text
-from aibackend.utils.pdf import get_chapters
 
 logger = logging.getLogger(__name__)
-
-
-def normalize_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return unicodedata.normalize("NFC", value.replace("\x00", "")).strip()
 
 
 async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
@@ -26,38 +19,27 @@ async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
         if book is None:
             raise ValueError(f"Book not found: {book_id}")
 
-        pdf_path = Path("/mnt") / book["source"].lstrip("/")
-        chapters = get_chapters(pdf_path)
-
-        await repo.delete_chapters(book_id)
-
-        chapter_count = 0
-        chunk_count = 0
-
-        for chapter_number, (title, content) in enumerate(chapters.items(), start=1):
-            chapter_id = await repo.create_chapter(
-                book_id=book_id,
-                chapter_number=chapter_number,
-                title=normalize_text(title) or "",
+        pdf_path = Path("/mnt") / book.source.lstrip("/")
+        await repo.delete_chunks(book.id)
+        chunks = pymupdf4llm.to_chunks(
+            doc=pdf_path,
+            show_progress=True,
+            use_ocr=False,
+            table_mode="isolate",
+        )
+        for i, chunk in enumerate(chunks):
+            chunk_py = Chunk(
+                book_id=book.id,
+                position=i,
+                raw_text=chunk.text,
+                meta_data=" ".join(chunk.metadata.section_path)
             )
-            chapter_count += 1
-
-            for position, chunk in enumerate(
-                chunk_text(content, chunk_size=1000, overlap=200)
-            ):
-                await repo.create_chunk(
-                    chapter_id=chapter_id,
-                    position=position,
-                    raw_text=normalize_text(chunk),
-                )
-                chunk_count += 1
+            await repo.create_chunk(chunk_py)
 
         await repo.commit()
-
         return {
             "book_id": book_id,
-            "chapter_count": chapter_count,
-            "chunk_count": chunk_count,
+            "chunk_count": len(chunks),
         }
 
     except Exception:
