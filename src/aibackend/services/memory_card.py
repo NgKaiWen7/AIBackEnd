@@ -56,10 +56,10 @@ Return valid JSON without Markdown fences or additional commentary.
 
 
 async def memory_card(
-    book_id: UUID, style: CardStyle, domain: PromptDomain, db: AsyncSession
+    card_deck_dir, book_id: UUID, style: CardStyle, domain: PromptDomain, db: AsyncSession
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
-    memory_card_repo = MemoryCardRepository(db)
+    memory_card_repo = MemoryCardRepository(card_deck_dir, db)
 
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
@@ -69,6 +69,7 @@ async def memory_card(
     result = MemoryCardResponse(title=book.title)
     system_prompt = build_system_prompt(style, domain)
     deck = CardDeck(source_id=book.id, system_prompt=system_prompt)
+    await memory_card_repo.create_deck(deck)
     for chunk in chunks:
         content = f"Meta data: {chunk.meta_data}\n{chunk.raw_text}"
         try:
@@ -83,17 +84,11 @@ async def memory_card(
                 format=MemoryConcept.model_json_schema(),
             )
             data = MemoryConcept.model_validate_json(response.message.content)
-            logger.info(str(data.model_dump()))
-            deck.concepts.append(data)
-
+            await memory_card_repo.create_cards(deck.id, [data])
+            await memory_card_repo.commit()
 
         except ValidationError as exc:
             print(f"Validation failed for chunk {chunk.id}: {exc}")
-            result.failure += 1
-            continue
-
-        except Exception as exc:
-            print(f"Processing failed for chunk {chunk.id}: {exc}")
             result.failure += 1
             continue
 
@@ -104,6 +99,4 @@ async def memory_card(
         result.concepts.append(data)
         result.success += 1
 
-    await memory_card_repo.create_deck(deck)
-    await memory_card_repo.commit()
     return result

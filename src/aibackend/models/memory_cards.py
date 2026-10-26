@@ -123,6 +123,7 @@ class CardDeck(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     source_id: UUID
     system_prompt: str
+    title: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     concepts: list[MemoryConcept] = Field(default_factory=list)
 
@@ -134,3 +135,13 @@ class MemoryCardResponse(BaseModel):
     success: int = 0
     failure: int = 0
     empty: int = 0
+
+class MemoryCardImportResponse(BaseModel):
+    deck_id: UUID
+    source_id: UUID
+    topic: str
+    cards_imported: int
+
+class MemoryCardImport(BaseModel):
+    topic: str = Field(min_length=1)
+    concepts: list[MemoryConcept] = Field(min_length=1)

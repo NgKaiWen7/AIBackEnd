@@ -92,6 +92,7 @@ def start_new_chat(page: Page) -> None:
 def generate_image(page: Page, concept: MemoryConcept) -> bool:
     """Generate and save one card image, retrying once on failure."""
     for attempt in range(1, 3):
+        start_new_chat(page)
         try:
             logger.info("Generating card %s (attempt %s/2)", concept.id, attempt)
             submit_prompt(page, concept.prompt)
@@ -116,6 +117,7 @@ def generate_image(page: Page, concept: MemoryConcept) -> bool:
         except Exception:
             logger.exception("Could not reset the generation chat")
     logger.error("Card %s failed after retry", concept.id)
+    start_new_chat(page)
     return False
 
 

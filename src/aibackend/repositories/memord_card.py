@@ -10,9 +10,9 @@ from aibackend.models.memory_cards import CardDeck, MemoryConcept
 
 
 class MemoryCardRepository:
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, storage_root):
         self.db = db
-        self.storage_root = Path("/mnt/data/card_decks").resolve()
+        self.storage_root = storage_root
 
     async def commit(self) -> None:
         await self.db.commit()
@@ -33,8 +33,8 @@ class MemoryCardRepository:
         if deck_row is None:
             return None
         concepts_query = text("""
-            SELECT title, content, image_prompt, created_at
-            FROM memory_concepts
+            SELECT id, title, content, image_prompt, created_at
+            FROM cards
             WHERE deck_id = :deck_id
             ORDER BY created_at NULLS LAST, id
         """)
@@ -45,20 +45,48 @@ class MemoryCardRepository:
             concepts=concepts,
         )
 
+    async def create_cards(self, deck_id: UUID, concepts: list[MemoryConcept]) -> int:
+        for concept in concepts:
+            await self.db.execute(
+                text("""
+                    INSERT INTO cards (
+                        deck_id,
+                        title,
+                        content,
+                        image_prompt
+                    )
+                    VALUES (
+                        :deck_id,
+                        :title,
+                        :content,
+                        :image_prompt
+                    )
+                """),
+                {
+                    "deck_id": deck_id,
+                    "title": concept.title,
+                    "content": concept.content,
+                    "image_prompt": concept.image_prompt,
+                },
+            )
+
+        return len(concepts)
+
     async def create_deck(self, deck: CardDeck) -> CardDeck:
         result = await self.db.execute(
             text("""
                 INSERT INTO card_decks (
-                    id, source_id, system_prompt
+                    id, source_id, title, system_prompt
                 )
                 VALUES (
-                    :id, :source_id, :system_prompt
+                    :id, :source_id, :title, :system_prompt
                 )
-                RETURNING id, source_id, system_prompt, created_at
+                RETURNING id, source_id, title, system_prompt, created_at
             """),
             {
                 "id": deck.id,
                 "source_id": deck.source_id,
+                "title": deck.title,
                 "system_prompt": deck.system_prompt,
             },
         )
