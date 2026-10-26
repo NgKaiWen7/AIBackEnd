@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aibackend.repositories.book_chunks import BookChunkRepository
 
 # Import query from the module containing your existing embedding/retrieval service.
-from aibackend.services.embedding import query
 
 SYSTEM_PROMPT = """
 You are a book question-answering assistant.

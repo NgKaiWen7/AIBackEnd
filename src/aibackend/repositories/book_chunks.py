@@ -16,7 +16,7 @@ class BookChunkRepository:
     async def rollback(self) -> None:
         await self.db.rollback()
 
-    async def get_book(self, book_id: UUID) -> Book:
+    async def get_book(self, book_id: UUID) -> Book | None:
         result = await self.db.execute(
             text("""
                 SELECT *
@@ -62,3 +62,46 @@ class BookChunkRepository:
             },
         )
         return result.scalar_one()
+
+    async def get_chunks(self, id: UUID) -> list[Chunk]:
+        result = await self.db.execute(
+            text(
+                """
+                SELECT * FROM chunks
+                WHERE book_id = :book_id
+                """
+            ),
+            {"book_id": id},
+        )
+        chunks = []
+        for i in result.mappings():
+            data = dict(i)
+            data.pop("embeddings")
+            chunks.append(Chunk(**data))
+        return chunks
+
+    async def update_embedding(self, id: UUID, embeddings: list[float]):
+        await self.db.execute(
+            text("""
+                UPDATE chunks SET
+                embeddings = :embeddings
+                WHERE id = :id
+                """),
+            {"embeddings": str(embeddings), "id": id},
+        )
+
+    async def query(self, embeddings: list[float], book_id):
+        query = text(
+            """
+            SELECT *
+            FROM chunks ORDER BY embeddings <=> CAST(:embeddings AS vector) ASC
+            LIMIT 5
+            """
+        )
+        chunks = []
+        result = await self.db.execute(query, {"embeddings": str(embeddings)})
+        for row in result.mappings():
+            data = dict(row)
+            data.pop("embeddings")
+            chunks.append(Chunk(**data))
+        return chunks
