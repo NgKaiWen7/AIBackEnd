@@ -87,3 +87,19 @@ class BookChunkRepository:
                 """),
             {"embeddings": str(embeddings), "id": id},
         )
+
+    async def query(self, embeddings: list[float], book_id):
+        query = text(
+            """
+            SELECT *
+            FROM chunks ORDER BY embeddings <=> CAST(:embeddings AS vector) ASC
+            LIMIT 5
+            """
+        )
+        chunks = []
+        result = await self.db.execute(query, {"embeddings": str(embeddings)})
+        for row in result.mappings():
+            data = dict(row)
+            data.pop("embeddings")
+            chunks.append(Chunk(**data))
+        return chunks

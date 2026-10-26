@@ -3,6 +3,7 @@ from uuid import UUID
 from ollama import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aibackend.models.chunking import Chunk
 from aibackend.repositories.book_chunks import BookChunkRepository
 
 EMBED_MODEL = "bge-m3"
@@ -19,7 +20,7 @@ async def embed(book_id: UUID, db: AsyncSession) -> dict:
     repo = BookChunkRepository(db)
 
     try:
-        chunks = await repo.get_chunks(book_id)
+        chunks: list[Chunk] = await repo.get_chunks(book_id)
         if len(chunks) == 0:
             raise ValueError(f"book_id: {book_id} not found for book")
 
@@ -36,3 +37,10 @@ async def embed(book_id: UUID, db: AsyncSession) -> dict:
     except Exception:
         await repo.rollback()
         raise
+
+
+async def query_func(query: str, book_id: UUID | None, db: AsyncSession) -> list[Chunk]:
+    embedding = await get_embedding(query)
+    repo = BookChunkRepository(db)
+    extracted_chunks = await repo.query(embedding, book_id)
+    return extracted_chunks

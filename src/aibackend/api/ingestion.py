@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aibackend.db.connection import get_db
 from aibackend.services.book_chat import chat
 from aibackend.services.chunking import ingest_book
-from aibackend.services.embedding import embed
+from aibackend.services.embedding import embed, query_func
 from aibackend.services.memory_card import memory_card
 
 router = APIRouter()
@@ -33,6 +33,15 @@ async def embed_book(book_id: UUID, db: AsyncSession = Depends(get_db)):
             detail=str(exc),
         ) from exc
 
+@router.post("/query")
+async def query_book(query: str, book_id: UUID | None = None, db: AsyncSession = Depends(get_db)):
+    try:
+        return await query_func(query, book_id, db)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from exc
 
 @router.post("/book_chat")
 async def book_chat(

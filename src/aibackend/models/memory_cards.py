@@ -6,8 +6,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class MemoryCardImagePrompt(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: UUID = Field(default_factory=uuid4)
     topic: str
     title: str
