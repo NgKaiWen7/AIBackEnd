@@ -1,12 +1,10 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class Book(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     title: str | None = None
     category: list[str] | None = Field(default_factory=list)

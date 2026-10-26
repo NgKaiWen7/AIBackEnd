@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.db.connection import get_db
@@ -24,7 +24,14 @@ async def generate_memory_card(book_id: UUID, db: AsyncSession = Depends(get_db)
 
 @router.post("/embed")
 async def embed_book(book_id: UUID, db: AsyncSession = Depends(get_db)):
-    return await embed(book_id, db)
+    try:
+        return await embed(book_id, db)
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post("/book_chat")
