@@ -75,7 +75,9 @@ class BookChunkRepository:
         )
         chunks = []
         for i in result.mappings():
-            chunks.append(Chunk(**i))
+            data = dict(i)
+            data.pop("embeddings")
+            chunks.append(Chunk(**data))
         return chunks
 
     async def update_embedding(self, id: UUID, embeddings: list[float]):

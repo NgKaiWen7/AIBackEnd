@@ -59,16 +59,15 @@ async def memory_card(
     card_deck_dir, book_id: UUID, style: CardStyle, domain: PromptDomain, db: AsyncSession
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
-    memory_card_repo = MemoryCardRepository(card_deck_dir, db)
+    memory_card_repo = MemoryCardRepository(db, card_deck_dir)
 
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
         raise ValueError(f"Book id: {book_id} not found")
     chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id)
-
     result = MemoryCardResponse(title=book.title)
     system_prompt = build_system_prompt(style, domain)
-    deck = CardDeck(source_id=book.id, system_prompt=system_prompt)
+    deck = CardDeck(source_id=book.id, title=book.title, system_prompt=system_prompt)
     await memory_card_repo.create_deck(deck)
     for chunk in chunks:
         content = f"Meta data: {chunk.meta_data}\n{chunk.raw_text}"

@@ -19,6 +19,7 @@ class PromptDomain(StrEnum):
     CODE = "code"
     MATHEMATICS = "mathematics"
     SYSTEMS = "systems"
+    CAR_TECHNICIAN = "car_technician"
 
 
 STYLE_PROMPTS: dict[CardStyle, str] = {
@@ -93,6 +94,13 @@ dependencies, ownership, data flow, control flow, and failure modes
 where relevant. Ensure arrows and labels represent real relationships.
 Never invent protocols, guarantees, or system behavior.
 """.strip(),
+    PromptDomain.CAR_TECHNICIAN: """
+Create one automotive technician learning card. Explain vehicle
+components, mechanical systems, electrical circuits, or diagnostic
+procedures accurately. Use labeled diagrams, wiring schematics, and
+troubleshooting flows where useful. Preserve technical specifications
+and highlight relevant safety precautions.
+""".strip(),
 }
 
 
@@ -136,11 +144,13 @@ class MemoryCardResponse(BaseModel):
     failure: int = 0
     empty: int = 0
 
+
 class MemoryCardImportResponse(BaseModel):
     deck_id: UUID
     source_id: UUID
     topic: str
     cards_imported: int
+
 
 class MemoryCardImport(BaseModel):
     topic: str = Field(min_length=1)
