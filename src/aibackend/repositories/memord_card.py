@@ -7,18 +7,69 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.models.memory_cards import CardDeck, MemoryConcept
+from aibackend.utils.constant import CARD_DECKS_DIR
 
 
 class MemoryCardRepository:
-    def __init__(self, db: AsyncSession, storage_root):
+    def __init__(self, db: AsyncSession):
         self.db = db
-        self.storage_root = storage_root
+        self.storage_root = CARD_DECKS_DIR
 
     async def commit(self) -> None:
         await self.db.commit()
 
     async def rollback(self) -> None:
         await self.db.rollback()
+
+    async def queue_all(self) -> list[CardDeck]:
+        query = text("""
+            SELECT
+                d.id AS deck_id,
+                d.source_id,
+                d.system_prompt,
+                d.title AS deck_title,
+                d.created_at AS deck_created_at,
+                c.id AS concept_id,
+                c.title AS concept_title,
+                c.content,
+                c.image_prompt,
+                c.image_path
+            FROM cards AS c
+            JOIN card_decks AS d
+                ON d.id = c.deck_id
+            WHERE
+                c.image_path IS NULL
+                AND c.generate = TRUE
+            ORDER BY d.id, c.id
+        """)
+
+        result = await self.db.execute(query)
+
+        decks: dict[UUID, CardDeck] = {}
+
+        for row in result.mappings():
+            deck_id = row["deck_id"]
+
+            if deck_id not in decks:
+                decks[deck_id] = CardDeck(
+                    id=deck_id,
+                    source_id=row["source_id"],
+                    system_prompt=row["system_prompt"],
+                    title=row["deck_title"],
+                    created_at=row["deck_created_at"],
+                    concepts=[],
+                )
+
+            decks[deck_id].concepts.append(
+                MemoryConcept(
+                    id=row["concept_id"],
+                    title=row["concept_title"],
+                    content=row["content"],
+                    image_prompt=row["image_prompt"],
+                    image_path=row["image_path"],
+                )
+            )
+        return list(decks.values())
 
     async def get_cards(self, source_id: UUID) -> CardDeck | None:
         deck_query = text("""

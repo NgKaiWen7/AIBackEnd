@@ -33,7 +33,13 @@ logging.basicConfig(
 logger = logging.getLogger("gemini_memory_card_service")
 
 URL = "https://gemini.rakyatdigital.gov.my/"
-PROFILE = Path("./my_profile")
+ACCOUNTS = [
+    {"name": "NG KAI WEN", "profile_dir": Path("./my_profile")},
+    {"name": "NG YONG SHENG", "profile_dir": Path("./ys_profile")},
+]
+account_queues = {account["name"]: queue.Queue() for account in ACCOUNTS}
+worker_ready = {account["name"]: threading.Event() for account in ACCOUNTS}
+worker_errors = {}
 DATA_DIR = Path("./browser_agent_output")
 PROMPT_TIMEOUT_SECONDS = int(os.getenv("GEMINI_PROMPT_TIMEOUT", "300"))
 RETRY_TIMEOUT_SECONDS = int(os.getenv("GEMINI_RETRY_TIMEOUT", "600"))
@@ -44,7 +50,6 @@ BACKEND_URL = "http://192.168.0.180:8000"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 job_queue: queue.Queue[list[MemoryConcept] | None] = queue.Queue()
-worker_ready = threading.Event()
 worker_start_error: BaseException | None = None
 worker_thread: threading.Thread | None = None
 
@@ -121,17 +126,17 @@ def generate_image(page: Page, concept: MemoryConcept) -> bool:
     return False
 
 
-def playwright_worker() -> None:
+def playwright_worker(account: dict) -> None:
     """Own the persistent browser and process queued concepts."""
-    global worker_start_error
-
+    name = account["name"]
     try:
-        PROFILE.mkdir(parents=True, exist_ok=True)
+        profile_dir = account["profile_dir"]
+        profile_dir.mkdir(parents=True, exist_ok=True)
         DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as playwright:
             context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(PROFILE.resolve()),
+                user_data_dir=profile_dir,
                 headless=False,
                 accept_downloads=True,
                 args=["--disable-blink-features=AutomationControlled"],
@@ -146,10 +151,10 @@ def playwright_worker() -> None:
                 page.bring_to_front()
                 page.goto(URL, wait_until="domcontentloaded")
                 try:
-                    page.get_by_text("NG KAI WEN").first.click(timeout=10000)
+                    page.get_by_text(name).first.click(timeout=10000)
                 except Exception:
                     logger.info("Account selection was not required")
-                worker_ready.set()
+                worker_ready[name].set()
                 logger.info("Image generation worker ready")
                 while True:
                     concepts = job_queue.get()
@@ -163,40 +168,61 @@ def playwright_worker() -> None:
             finally:
                 context.close()
     except BaseException as exc:
-        worker_start_error = exc
-        worker_ready.set()
-        logger.exception("Playwright worker failed")
+        worker_errors[name] = exc
+        worker_ready[name].set()
+        logger.exception("[%s] Worker failed", name)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Do not accept HTTP requests until browser startup has completed."""
-    global worker_thread
+    """Start one persistent Playwright worker per account."""
+    workers = []
 
-    worker_thread = threading.Thread(
-        target=playwright_worker, name="playwright-generation-worker", daemon=True
-    )
-    worker_thread.start()
-
-    await asyncio.to_thread(worker_ready.wait)
-
-    if worker_start_error is not None:
-        worker_thread.join(timeout=2)
-        raise RuntimeError(
-            "Could not initialize the Playwright browser. Check the terminal logs."
-        ) from worker_start_error
+    for account in ACCOUNTS:
+        thread = threading.Thread(
+            target=playwright_worker,
+            args=(account,),
+            name=f"image-worker-{account['name']}",
+            daemon=True,
+        )
+        thread.start()
+        workers.append(thread)
 
     try:
+        # Wait until every worker reports startup success or failure.
+        await asyncio.gather(
+            *[
+                asyncio.to_thread(worker_ready[account["name"]].wait)
+                for account in ACCOUNTS
+            ]
+        )
+
+        failed = {name: error for name, error in worker_errors.items()}
+
+        if failed:
+            raise RuntimeError(
+                f"Failed to initialize account workers: {', '.join(failed)}"
+            ) from next(iter(failed.values()))
+
+        logger.info("All account workers are ready")
         yield
+
     finally:
-        # The single worker finishes any already-queued jobs before exiting.
-        job_queue.put(None)
-        await asyncio.to_thread(worker_thread.join, 30)
-        if worker_thread.is_alive():
-            logger.warning(
-                "Playwright worker is still running during shutdown; "
-                "an active generation may not finish before process exit."
-            )
+        # Send a shutdown sentinel to each independent queue.
+        for account in ACCOUNTS:
+            account_queues[account["name"]].put(None)
+
+        # Wait for workers without blocking the FastAPI event loop.
+        await asyncio.gather(
+            *[asyncio.to_thread(thread.join, 30) for thread in workers]
+        )
+
+        for thread in workers:
+            if thread.is_alive():
+                logger.warning(
+                    "%s is still running during shutdown",
+                    thread.name,
+                )
 
 
 app = FastAPI(
@@ -222,40 +248,35 @@ def root():
 
 @app.get("/queue")
 async def get_queue() -> dict[str, int]:
-    """Return the current image-generation queue size."""
-    return {"queue_size": job_queue.qsize()}
+    """Return the current image-generation queue statistics."""
+
+    with job_queue.mutex:
+        jobs = list(job_queue.queue)
+
+    return {
+        "queue_size": len(jobs),
+        "prompt_count": sum(len(job) for job in jobs),
+    }
 
 
 @app.post("/generate", status_code=202)
-async def generate_cards(request: MemoryCardRequest) -> dict[str, Any]:
+async def generate_cards(request: list[MemoryConcept]) -> dict[str, Any]:
     """Validate and queue concepts for background image generation."""
-
-    if (
-        worker_thread is None
-        or not worker_thread.is_alive()
-        or worker_start_error is not None
-        or not worker_ready.is_set()
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail="The Playwright generation worker is unavailable.",
-        )
-
-    concepts = request.concepts
-
-    if not concepts:
+    if not request:
         raise HTTPException(
             status_code=422,
             detail="At least one concept is required.",
         )
 
-    job_queue.put(concepts)
+    for req in request:
+        job_queue.put([req])
 
     return {
         "accepted": True,
-        "concepts": len(concepts),
-        "card_ids": [str(concept.id) for concept in concepts],
+        "concepts": len(request),
+        "card_ids": [str(req.id) for req in request],
     }
+
 
 @app.post("/upload-generated-images")
 async def upload_generated_images() -> dict:
@@ -301,10 +322,12 @@ async def upload_generated_images() -> dict:
 
             except Exception as exc:
                 logger.exception("Failed to upload image: %s", image_path)
-                failed.append({
-                    "file": str(image_path),
-                    "error": str(exc),
-                })
+                failed.append(
+                    {
+                        "file": str(image_path),
+                        "error": str(exc),
+                    }
+                )
 
     return {
         "total_images": len(images),

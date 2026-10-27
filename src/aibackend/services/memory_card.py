@@ -1,6 +1,9 @@
 import logging
+from typing import Any
 from uuid import UUID
 
+import httpx
+from fastapi import HTTPException
 from ollama import AsyncClient
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +19,7 @@ from aibackend.models.memory_cards import (
 )
 from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.repositories.memord_card import MemoryCardRepository
+from aibackend.utils.constant import CARD_DECKS_DIR, COMPUTE_SERVER_URL
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +59,39 @@ Return valid JSON without Markdown fences or additional commentary.
 """
 
 
-async def memory_card(
-    card_deck_dir, book_id: UUID, style: CardStyle, domain: PromptDomain, db: AsyncSession
+def format_prompt(card_deck: CardDeck):
+    concepts = []
+    for card in card_deck.concepts:
+        prompt = f"""
+        {card_deck.system_prompt}
+        CARD TITLE
+        {card.title}
+
+        LEARNING CONTENT
+        {card.content}
+
+        VISUAL INSTRUCTIONS
+        {card.image_prompt}
+
+        OUTPUT REQUIREMENTS
+        Generate a single, complete learning-card image that fills the
+        entire canvas edge to edge, with no external background, outer margins,
+        mockups, paper textures, or shadows. Keep all content inside the card,
+        preserving technical accuracy, readability,
+        and the visual style specified in the image prompt.
+        """.strip()
+        concepts.append({"id": str(card.id), "prompt": prompt})
+    return concepts
+
+
+async def prompt_memory_card(
+    book_id: UUID,
+    style: CardStyle,
+    domain: PromptDomain,
+    db: AsyncSession,
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
-    memory_card_repo = MemoryCardRepository(db, card_deck_dir)
+    memory_card_repo = MemoryCardRepository(db)
 
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
@@ -83,6 +115,9 @@ async def memory_card(
                 format=MemoryConcept.model_json_schema(),
             )
             data = MemoryConcept.model_validate_json(response.message.content)
+            if not data.title and not data.content and not data.image_prompt:
+                result.empty += 1
+                continue
             await memory_card_repo.create_cards(deck.id, [data])
             await memory_card_repo.commit()
 
@@ -91,11 +126,106 @@ async def memory_card(
             result.failure += 1
             continue
 
-        if not data.title and not data.content and not data.image_prompt:
-            result.empty += 1
-            continue
-
         result.concepts.append(data)
         result.success += 1
 
     return result
+
+
+async def send_all_image(db: AsyncSession) -> dict[str, Any]:
+    # Upload previously generated images first.
+    async with httpx.AsyncClient(timeout=300) as client:
+        upload_response = await client.post(
+            "http://192.168.0.115:8000/upload-generated-images"
+        )
+        upload_response.raise_for_status()
+
+    repo = MemoryCardRepository(db)
+    card_decks = await repo.queue_all()
+    print(card_decks)
+
+    concepts = []
+    deck_stats = []
+
+    for card_deck in card_decks:
+        deck_concepts = format_prompt(card_deck)
+        concepts.extend(deck_concepts)
+
+        deck_stats.append({
+            "deck_id": str(card_deck.id),
+            "deck_title": card_deck.title,
+            "concepts_count": len(deck_concepts),
+        })
+
+    # Submit concepts to the image-generation server.
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{COMPUTE_SERVER_URL}/generate",
+            json=concepts,
+        )
+        response.raise_for_status()
+
+    try:
+        generation_result = response.json()
+    except ValueError:
+        generation_result = response.text
+
+    try:
+        upload_result = upload_response.json()
+    except ValueError:
+        upload_result = upload_response.text
+
+    return {
+        "status": "success",
+        "stats": {
+            "decks_found": len(card_decks),
+            "concepts_submitted": len(concepts),
+            "decks": deck_stats,
+        },
+        "upload": {
+            "status_code": upload_response.status_code,
+            "result": upload_result,
+        },
+        "generation": {
+            "status_code": response.status_code,
+            "result": generation_result,
+        },
+    }
+
+
+async def generate_memory_card_images(source_id: UUID, db: AsyncSession) -> dict:
+    repo = MemoryCardRepository(db)
+    card_deck = await repo.get_cards(source_id)
+
+    if not card_deck:
+        raise HTTPException(
+            status_code=404,
+            detail="No memory cards found for this source",
+        )
+
+    concepts = format_prompt(card_deck)
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{COMPUTE_SERVER_URL}/generate",
+                json=concepts,
+            )
+            response.raise_for_status()
+
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Timed out waiting for the computing server",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The computing server rejected the generation request",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to the computing server",
+        ) from exc
+
+    return response.json()
