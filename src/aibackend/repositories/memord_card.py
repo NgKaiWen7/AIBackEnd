@@ -122,7 +122,7 @@ class MemoryCardRepository:
                         :deck_id,
                         :title,
                         :content,
-                        :image_prompt
+                        :image_prompt,
                         :generate
                     )
                 """),
@@ -160,10 +160,10 @@ class MemoryCardRepository:
             await self.db.execute(
                 text("""
                     INSERT INTO cards (
-                        deck_id, title, content, image_prompt
+                        deck_id, title, content, image_prompt, generate
                     )
                     VALUES (
-                        :deck_id, :title, :content, :image_prompt
+                        :deck_id, :title, :content, :image_prompt, :generate
                     )
                 """),
                 {
@@ -171,6 +171,7 @@ class MemoryCardRepository:
                     "title": concept.title,
                     "content": concept.content,
                     "image_prompt": concept.image_prompt,
+                    "generate": concept.generate,
                 },
             )
         return CardDeck(

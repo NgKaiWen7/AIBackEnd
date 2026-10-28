@@ -31,13 +31,7 @@ async def generate_memory_card(
     domain: PromptDomain = PromptDomain.GENERAL,
     db: AsyncSession = Depends(get_db),
 ) -> MemoryCardResponse:
-    try:
-        return await prompt_memory_card(book_id, style, domain, db)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        ) from exc
+    return await prompt_memory_card(book_id, style, domain, db)
 
 
 @router.post("/memory-card-batch")
@@ -49,16 +43,8 @@ async def generate_memory_card_batch(
 ) -> list[MemoryCardResponse]:
     responses = []
     for current_book_id in book_id:
-        try:
-            response = await prompt_memory_card(current_book_id, style, domain, db)
-            responses.append(response)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=(f"Failed to generate memory cards for book {current_book_id}"),
-            ) from exc
+        response = await prompt_memory_card(current_book_id, style, domain, db)
+        responses.append(response)
 
     return responses
 

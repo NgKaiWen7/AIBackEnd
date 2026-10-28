@@ -105,6 +105,7 @@ async def prompt_memory_card(
     system_prompt = build_system_prompt(style, domain)
     deck = CardDeck(source_id=book.id, title=book.title, system_prompt=system_prompt)
     await memory_card_repo.create_deck(deck)
+    await memory_card_repo.commit()
     for chunk in chunks:
         content = f"Meta data: {chunk.meta_data}\n{chunk.raw_text}"
         try:
