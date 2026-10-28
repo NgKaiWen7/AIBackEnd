@@ -1,10 +1,14 @@
 import logging
+import re
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import httpx
+import pymupdf
 from fastapi import HTTPException
 from ollama import AsyncClient
+from PIL import Image
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -116,7 +120,7 @@ async def prompt_memory_card(
             )
             data = response.message.content
             if data is None:
-                data = ''
+                data = ""
             data = MemoryConcept.model_validate_json(data)
             if not data.title and not data.content and not data.image_prompt:
                 result.empty += 1
@@ -199,6 +203,64 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
             },
         }
     return {"status": "success", "stats": {"decks_found": 0}}
+
+
+async def export_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:
+    repo = MemoryCardRepository(db)
+    card_deck = await repo.get_cards(deck_id)
+
+    if not card_deck or not card_deck.concepts:
+        raise ValueError("No memory cards found for this deck")
+
+    output_dir = Path("/mnt/data/card_decks_export")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if card_deck.title:
+        filename = re.sub(r"[^\w\s.-]", "", card_deck.title)
+        filename = re.sub(r"\s+", "_", filename).strip("._")
+
+        pdf_path = output_dir / f"{filename or str(deck_id)}.pdf"
+    else:
+        pdf_path = output_dir / f"{deck_id}.pdf"
+    pdf = pymupdf.open()
+    skipped_cards = []
+
+    try:
+        for card in card_deck.concepts:
+            if not card.image_path:
+                skipped_cards.append(str(card.id))
+                continue
+
+            image_path = Path(card.image_path)
+
+            if not image_path.is_file():
+                skipped_cards.append(str(card.id))
+                continue
+
+            # Read the image dimensions.
+            with Image.open(card.image_path) as image:
+                width, height = image.size
+
+            # Create a page matching the image dimensions.
+            page = pdf.new_page(width=width, height=height)
+
+            # Draw the image edge-to-edge.
+            page.insert_image(page.rect, filename=str(card.image_path))
+
+        if pdf.page_count == 0:
+            raise ValueError("No valid card images found")
+
+        pdf.save(str(pdf_path), garbage=4, deflate=True)
+
+    finally:
+        pdf.close()
+
+    return {
+        "deck_id": str(deck_id),
+        "pdf_path": str(pdf_path.resolve()),
+        "exported_count": len(card_deck.concepts) - len(skipped_cards),
+        "skipped_cards": skipped_cards,
+    }
 
 
 async def generate_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:

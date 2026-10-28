@@ -124,7 +124,7 @@ class MemoryConcept(BaseModel):
     title: str
     content: str
     image_prompt: str
-    generate: bool = True
+    generate: bool | None = True
     image_path: str | None = None
 
 

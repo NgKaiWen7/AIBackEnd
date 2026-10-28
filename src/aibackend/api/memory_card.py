@@ -15,6 +15,7 @@ from aibackend.models.memory_cards import (
 )
 from aibackend.repositories.memord_card import MemoryCardRepository
 from aibackend.services.memory_card import (
+    export_memory_card_images,
     generate_memory_card_images,
     prompt_memory_card,
     send_all_image,
@@ -70,22 +71,14 @@ async def import_memory_card(
     db: AsyncSession = Depends(get_db),
 ) -> MemoryCardImportResponse:
     if file.filename is None or not file.filename.lower().endswith(".json"):
-        raise HTTPException(
-            status_code=400,
-            detail="A JSON file is required",
-        )
-
+        raise HTTPException(status_code=400, detail="A JSON file is required")
     try:
         raw = await file.read(10 * 1024 * 1024 + 1)
-
         if len(raw) > 10 * 1024 * 1024:
             raise HTTPException(
-                status_code=413,
-                detail="JSON file exceeds the 10 MB limit",
+                status_code=413, detail="JSON file exceeds the 10 MB limit"
             )
-
         payload = MemoryCardImport.model_validate_json(raw)
-
     except ValidationError as exc:
         raise HTTPException(
             status_code=422,
@@ -118,17 +111,22 @@ async def import_memory_card(
     )
 
 
-@router.post("/memory-card/source/{deck_id}/images")
-async def generate_images(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    return await generate_memory_card_images(deck_id, db)
-
-
 @router.post("/memory-card/queue/images")
 async def queue_images(db: AsyncSession = Depends(get_db)) -> dict:
     return await send_all_image(db)
 
 
-@router.delete("/memory-card/source/{deck_id}/images")
+@router.post("/memory-card/deck/{deck_id}/images")
+async def generate_images(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    return await generate_memory_card_images(deck_id, db)
+
+
+@router.post("/memory-card/deck/{deck_id}/export")
+async def export_deck(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    return await export_memory_card_images(deck_id, db)
+
+
+@router.delete("/memory-card/deck/{deck_id}/images")
 async def clear_memory_card_images(
     deck_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> dict[str, int | str]:

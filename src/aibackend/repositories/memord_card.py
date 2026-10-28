@@ -88,10 +88,9 @@ class MemoryCardRepository:
 
     async def get_cards(self, deck_id: UUID) -> CardDeck | None:
         deck_query = text("""
-            SELECT id, source_id, system_prompt, created_at
+            SELECT id, source_id, system_prompt, title, created_at
             FROM card_decks
             WHERE id = :id
-            ORDER BY created_at DESC
             LIMIT 1
         """)
         result = await self.db.execute(deck_query, {"id": deck_id})
@@ -99,17 +98,14 @@ class MemoryCardRepository:
         if deck_row is None:
             return None
         concepts_query = text("""
-            SELECT id, title, content, image_prompt, created_at
+            SELECT *
             FROM cards
             WHERE deck_id = :id
-            ORDER BY created_at NULLS LAST, id
+            ORDER BY created_at ASC
         """)
         result = await self.db.execute(concepts_query, {"id": deck_row["id"]})
         concepts = [MemoryConcept(**row) for row in result.mappings().all()]
-        return CardDeck(
-            **dict(deck_row),
-            concepts=concepts,
-        )
+        return CardDeck(**dict(deck_row), concepts=concepts)
 
     async def create_cards(self, deck_id: UUID, concepts: list[MemoryConcept]) -> int:
         for concept in concepts:
@@ -225,12 +221,9 @@ class MemoryCardRepository:
                 text("""
                     UPDATE cards AS c
                     SET image_path = NULL
-                    FROM card_decks AS d
-                    WHERE c.deck_id = d.id
-                      AND d.id = :deck_id
-                      AND c.image_path IS NOT NULL
+                    WHERE c.deck_id = :deck_id
                 """),
-                {"source_id": deck_id},
+                {"deck_id": deck_id},
             )
 
             await self.commit()
