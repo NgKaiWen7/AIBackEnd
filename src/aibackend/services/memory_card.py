@@ -114,7 +114,10 @@ async def prompt_memory_card(
                 options={"temperature": 0.5},
                 format=MemoryConcept.model_json_schema(),
             )
-            data = MemoryConcept.model_validate_json(response.message.content)
+            data = response.message.content
+            if data is None:
+                data = ''
+            data = MemoryConcept.model_validate_json(data)
             if not data.title and not data.content and not data.image_prompt:
                 result.empty += 1
                 continue
