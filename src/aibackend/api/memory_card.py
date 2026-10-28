@@ -118,9 +118,9 @@ async def import_memory_card(
     )
 
 
-@router.post("/memory-card/source/{source_id}/images")
-async def generate_images(source_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    return await generate_memory_card_images(source_id, db)
+@router.post("/memory-card/source/{deck_id}/images")
+async def generate_images(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    return await generate_memory_card_images(deck_id, db)
 
 
 @router.post("/memory-card/queue/images")
@@ -128,14 +128,14 @@ async def queue_images(db: AsyncSession = Depends(get_db)) -> dict:
     return await send_all_image(db)
 
 
-@router.delete("/memory-card/source/{source_id}/images")
+@router.delete("/memory-card/source/{deck_id}/images")
 async def clear_memory_card_images(
-    source_id: UUID, db: AsyncSession = Depends(get_db)
+    deck_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> dict[str, int | str]:
     repo = MemoryCardRepository(db)
     try:
-        deleted_count = await repo.clear_images(source_id)
-        return {"source_id": str(source_id), "deleted_images": deleted_count}
+        deleted_count = await repo.clear_images(deck_id)
+        return {"deck_id": str(deck_id), "deleted_images": deleted_count}
     except HTTPException:
         raise
     except Exception as exc:

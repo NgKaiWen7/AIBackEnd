@@ -201,9 +201,9 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
     return {"status": "success", "stats": {"decks_found": 0}}
 
 
-async def generate_memory_card_images(source_id: UUID, db: AsyncSession) -> dict:
+async def generate_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:
     repo = MemoryCardRepository(db)
-    card_deck = await repo.get_cards(source_id)
+    card_deck = await repo.get_cards(deck_id)
 
     if not card_deck:
         raise HTTPException(
