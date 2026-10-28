@@ -1,14 +1,27 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.db.connection import get_db
+from aibackend.models.chunking import Book
 from aibackend.services.book_chat import chat
-from aibackend.services.chunking import ingest_book
+from aibackend.services.chunking import create_book_from_upload, ingest_book
 from aibackend.services.embedding import embed, query_func
 
 router = APIRouter()
+
+
+@router.post("/books")
+async def upload_book(
+    file: UploadFile = File(...),
+    title: str | None = None,
+    description: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> Book:
+    return await create_book_from_upload(
+        file=file, db=db, title=title, description=description
+    )
 
 
 @router.post("/ingest-book")

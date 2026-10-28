@@ -16,6 +16,46 @@ class BookChunkRepository:
     async def rollback(self) -> None:
         await self.db.rollback()
 
+    async def create_book(self, book: Book) -> Book:
+        result = await self.db.execute(
+            text("""
+                INSERT INTO books (
+                    id,
+                    title,
+                    category,
+                    status,
+                    last_read,
+                    description,
+                    source,
+                    created_at
+                )
+                VALUES (
+                    :id,
+                    :title,
+                    :category,
+                    :status,
+                    :last_read,
+                    :description,
+                    :source,
+                    COALESCE(:created_at, NOW())
+                )
+                RETURNING *
+            """),
+            {
+                "id": book.id,
+                "title": book.title,
+                "category": book.category,
+                "status": book.status,
+                "last_read": book.last_read,
+                "description": book.description,
+                "source": book.source,
+                "created_at": book.created_at,
+            },
+        )
+
+        row = result.mappings().one()
+        return Book(**row)
+
     async def get_book(self, book_id: UUID) -> Book | None:
         result = await self.db.execute(
             text("""
