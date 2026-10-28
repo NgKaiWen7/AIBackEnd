@@ -3,7 +3,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import HTTPException, UploadFile
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.models.memory_cards import CardDeck, MemoryConcept
@@ -20,6 +20,25 @@ class MemoryCardRepository:
 
     async def rollback(self) -> None:
         await self.db.rollback()
+
+    async def update_queue(self, ids: list[UUID]) -> int:
+        if not ids:
+            return 0
+
+        query = text("""
+            UPDATE cards
+            SET generate = FALSE
+            WHERE id IN :ids
+            RETURNING id, generate
+        """).bindparams(bindparam("ids", expanding=True))
+
+        result = await self.db.execute(query, {"ids": ids})
+        updated_rows = result.mappings().all()
+
+        print(f"Updated {len(updated_rows)} rows")
+        print(updated_rows[:5])
+
+        return len(updated_rows)
 
     async def queue_all(self) -> list[CardDeck]:
         query = text("""
@@ -104,13 +123,15 @@ class MemoryCardRepository:
                         deck_id,
                         title,
                         content,
-                        image_prompt
+                        image_prompt,
+                        generate
                     )
                     VALUES (
                         :deck_id,
                         :title,
                         :content,
                         :image_prompt
+                        :generate
                     )
                 """),
                 {
@@ -118,6 +139,7 @@ class MemoryCardRepository:
                     "title": concept.title,
                     "content": concept.content,
                     "image_prompt": concept.image_prompt,
+                    "generate": concept.generate,
                 },
             )
 

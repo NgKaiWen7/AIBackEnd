@@ -105,7 +105,7 @@ async def prompt_memory_card(
         content = f"Meta data: {chunk.meta_data}\n{chunk.raw_text}"
         try:
             response = await client.chat(
-                model="qwen3.5:9b",
+                model="qwen3.5:4b",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": content},
@@ -142,7 +142,6 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
 
     repo = MemoryCardRepository(db)
     card_decks = await repo.queue_all()
-    print(card_decks)
 
     concepts = []
     deck_stats = []
@@ -151,46 +150,52 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
         deck_concepts = format_prompt(card_deck)
         concepts.extend(deck_concepts)
 
-        deck_stats.append({
-            "deck_id": str(card_deck.id),
-            "deck_title": card_deck.title,
-            "concepts_count": len(deck_concepts),
-        })
+        deck_stats.append(
+            {
+                "deck_id": str(card_deck.id),
+                "deck_title": card_deck.title,
+                "concepts_count": len(deck_concepts),
+            }
+        )
 
     # Submit concepts to the image-generation server.
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            f"{COMPUTE_SERVER_URL}/generate",
-            json=concepts,
-        )
-        response.raise_for_status()
+    if len(concepts) > 0:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{COMPUTE_SERVER_URL}/generate",
+                json=concepts,
+            )
+            response.raise_for_status()
+        ids = [concept["id"] for concept in concepts]
+        await repo.update_queue(ids)
+        await db.commit()
+        try:
+            generation_result = response.json()
+        except ValueError:
+            generation_result = response.text
 
-    try:
-        generation_result = response.json()
-    except ValueError:
-        generation_result = response.text
+        try:
+            upload_result = upload_response.json()
+        except ValueError:
+            upload_result = upload_response.text
 
-    try:
-        upload_result = upload_response.json()
-    except ValueError:
-        upload_result = upload_response.text
-
-    return {
-        "status": "success",
-        "stats": {
-            "decks_found": len(card_decks),
-            "concepts_submitted": len(concepts),
-            "decks": deck_stats,
-        },
-        "upload": {
-            "status_code": upload_response.status_code,
-            "result": upload_result,
-        },
-        "generation": {
-            "status_code": response.status_code,
-            "result": generation_result,
-        },
-    }
+        return {
+            "status": "success",
+            "stats": {
+                "decks_found": len(card_decks),
+                "concepts_submitted": len(concepts),
+                "decks": deck_stats,
+            },
+            "upload": {
+                "status_code": upload_response.status_code,
+                "result": upload_result,
+            },
+            "generation": {
+                "status_code": response.status_code,
+                "result": generation_result,
+            },
+        }
+    return {"status": "success", "stats": {"decks_found": 0}}
 
 
 async def generate_memory_card_images(source_id: UUID, db: AsyncSession) -> dict:
