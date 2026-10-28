@@ -34,10 +34,6 @@ class MemoryCardRepository:
 
         result = await self.db.execute(query, {"ids": ids})
         updated_rows = result.mappings().all()
-
-        print(f"Updated {len(updated_rows)} rows")
-        print(updated_rows[:5])
-
         return len(updated_rows)
 
     async def queue_all(self) -> list[CardDeck]:
