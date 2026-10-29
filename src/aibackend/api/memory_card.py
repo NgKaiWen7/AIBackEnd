@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -27,23 +28,21 @@ router = APIRouter()
 @router.post("/memory-card")
 async def generate_memory_card(
     book_id: UUID,
-    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
-    domain: PromptDomain = PromptDomain.GENERAL,
+    large: bool,
     db: AsyncSession = Depends(get_db),
 ) -> MemoryCardResponse:
-    return await prompt_memory_card(book_id, style, domain, db)
+    return await prompt_memory_card(book_id, large, db)
 
 
 @router.post("/memory-card-batch")
 async def generate_memory_card_batch(
     book_id: list[UUID],
-    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
-    domain: PromptDomain = PromptDomain.GENERAL,
+    large: bool,
     db: AsyncSession = Depends(get_db),
 ) -> list[MemoryCardResponse]:
     responses = []
     for current_book_id in book_id:
-        response = await prompt_memory_card(current_book_id, style, domain, db)
+        response = await prompt_memory_card(current_book_id, large, db)
         responses.append(response)
 
     return responses
@@ -107,9 +106,43 @@ async def generate_images(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     return await generate_memory_card_images(deck_id, db)
 
 
+@router.patch("/memory-card/deck/{deck_id}/prompt")
+async def patch_style(
+    deck_id: UUID,
+    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
+    domain: PromptDomain = PromptDomain.GENERAL,
+    title: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> CardDeck:
+    system_prompt = build_system_prompt(style, domain)
+    repo = MemoryCardRepository(db)
+    return await repo.update_deck(deck_id, title, system_prompt)
+
+
 @router.post("/memory-card/deck/{deck_id}/export")
 async def export_deck(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
     return await export_memory_card_images(deck_id, db)
+
+
+@router.post("/memory-card/deck/export_all")
+async def export_all_deck(db: AsyncSession = Depends(get_db)) -> dict:
+    repo = MemoryCardRepository(db)
+    deck_ids = await repo.get_ready_decks()
+
+    results = await asyncio.gather(
+        *(export_memory_card_images(deck_id, db) for deck_id in deck_ids),
+        return_exceptions=True,
+    )
+
+    return {
+        "total": len(deck_ids),
+        "results": {
+            str(deck_id): (
+                {"error": str(result)} if isinstance(result, Exception) else result
+            )
+            for deck_id, result in zip(deck_ids, results)
+        },
+    }
 
 
 @router.delete("/memory-card/deck/{deck_id}/images")

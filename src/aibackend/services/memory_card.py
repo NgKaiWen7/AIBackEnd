@@ -62,17 +62,43 @@ The image_prompt must describe the educational content to visualize, not merely 
 Return valid JSON without Markdown fences or additional commentary.
 """
 
+SYSTEM_PROMPT = """
+You are an expert technical educator. Extract the most valuable learning
+concepts from the supplied source chunk for technical learning and visual
+memory-card generation.
+
+Focus on:
+- Core principles, definitions, and mechanisms.
+- Equations, algorithms, and implementation details.
+- Important relationships, trade-offs, limitations, and failure modes.
+- Deep insights that improve technical understanding.
+
+Rules:
+- Extract only genuinely valuable main ideas; omit filler and trivial details.
+- Each concept must teach one coherent, self-contained learning objective.
+- Preserve technical accuracy, equations, assumptions, and important details.
+- Do not invent information or examples unsupported by the source.
+- Keep explanations concise but sufficiently detailed for deep understanding.
+- Describe a specific educational diagram, equation, flow, or comparison
+  that visually explains each concept.
+- Avoid redundant concepts. Prefer quality over quantity.
+
+Return:
+[Concise, self-contained explanation of the main idea, including essential
+mechanisms, equations, examples, or caveats where relevant.]
+
+If the chunk contains no valuable learning concepts, return an empty response.
+
+Do not output JSON, Markdown code fences, or introductory commentary.
+"""
+
 
 def format_prompt(card_deck: CardDeck):
     concepts = []
     for card in card_deck.concepts:
         prompt = f"""
+        CARD STYLE
         {card_deck.system_prompt}
-        CARD TITLE
-        {card.title}
-
-        LEARNING CONTENT
-        {card.content}
 
         VISUAL INSTRUCTIONS
         {card.image_prompt}
@@ -90,8 +116,7 @@ def format_prompt(card_deck: CardDeck):
 
 async def prompt_memory_card(
     book_id: UUID,
-    style: CardStyle,
-    domain: PromptDomain,
+    large: bool,
     db: AsyncSession,
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
@@ -100,10 +125,9 @@ async def prompt_memory_card(
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
         raise ValueError(f"Book id: {book_id} not found")
-    chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id)
+    chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id, large)
     result = MemoryCardResponse(title=book.title)
-    system_prompt = build_system_prompt(style, domain)
-    deck = CardDeck(source_id=book.id, title=book.title, system_prompt=system_prompt)
+    deck = CardDeck(source_id=book.id, title=book.title, system_prompt="temp")
     await memory_card_repo.create_deck(deck)
     await memory_card_repo.commit()
     for chunk in chunks:
@@ -117,12 +141,12 @@ async def prompt_memory_card(
                 ],
                 think=False,
                 options={"temperature": 0.5},
-                format=MemoryConcept.model_json_schema(),
+                # format=MemoryConcept.model_json_schema(),
             )
             data = response.message.content
             if data is None:
                 data = ""
-            data = MemoryConcept.model_validate_json(data)
+            data = MemoryConcept(image_prompt=data, title="temp", content="temp")
             if not data.title and not data.content and not data.image_prompt:
                 result.empty += 1
                 continue
@@ -249,7 +273,12 @@ async def export_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:
             page.insert_image(page.rect, filename=str(card.image_path))
 
         if pdf.page_count == 0:
-            raise ValueError("No valid card images found")
+            return {
+                "deck_id": str(deck_id),
+                "pdf_path": str(pdf_path.resolve()),
+                "exported_count": len(card_deck.concepts) - len(skipped_cards),
+                "skipped_cards": skipped_cards,
+            }
 
         pdf.save(str(pdf_path), garbage=4, deflate=True)
 
