@@ -137,6 +137,31 @@ class MemoryCardRepository:
 
         return len(concepts)
 
+    async def update_deck(
+        self,
+        id: UUID,
+        title: str | None = None,
+        system_prompt: str | None = None,
+    ) -> CardDeck:
+        result = await self.db.execute(
+            text("""
+                UPDATE card_decks
+                SET
+                    system_prompt = COALESCE(:system_prompt, system_prompt)
+                WHERE id = :id
+                RETURNING id, source_id, title, system_prompt, created_at
+            """),
+            {
+                "id": id,
+                "system_prompt": system_prompt,
+            },
+        )
+        deck_row = result.mappings().one_or_none()
+        if deck_row is None:
+            raise ValueError(f"Deck not found: {id}")
+
+        return CardDeck(**dict(deck_row))
+
     async def create_deck(self, deck: CardDeck) -> CardDeck:
         result = await self.db.execute(
             text("""
@@ -178,6 +203,19 @@ class MemoryCardRepository:
             **deck_row,
             concepts=deck.concepts,
         )
+
+    async def get_ready_decks(self) -> list[UUID]:
+        result = await self.db.execute(
+            text("""
+                SELECT cd.id
+                FROM card_decks cd
+                JOIN cards c ON c.deck_id = cd.id
+                GROUP BY cd.id
+                HAVING COUNT(c.id) > 1
+                   AND COUNT(c.image_path) = COUNT(c.id);
+            """)
+        )
+        return list(result.scalars().all())
 
     async def delete_deck(self, deck_id: UUID) -> bool:
         result = await self.db.execute(

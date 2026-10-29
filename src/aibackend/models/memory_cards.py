@@ -131,7 +131,7 @@ class MemoryConcept(BaseModel):
 class CardDeck(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     source_id: UUID
-    system_prompt: str
+    system_prompt: str | None = None
     title: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     concepts: list[MemoryConcept] = Field(default_factory=list)
