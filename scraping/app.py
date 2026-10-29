@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import queue
+import shutil
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -20,10 +21,6 @@ from pydantic import BaseModel
 class MemoryConcept(BaseModel):
     id: UUID
     prompt: str
-
-
-class MemoryCardRequest(BaseModel):
-    concepts: list[MemoryConcept]
 
 
 logging.basicConfig(
@@ -48,10 +45,24 @@ DOWNLOAD_BUTTON_SELECTOR = (
 )
 BACKEND_URL = "http://192.168.0.180:8000"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+SESSION_MAX_SECONDS = 3600
 
 job_queue: queue.Queue[list[MemoryConcept] | None] = queue.Queue()
 worker_start_error: BaseException | None = None
 worker_thread: threading.Thread | None = None
+
+
+def clear_profile_cache(profile_dir: Path) -> None:
+    """Delete regenerable caches only (keeps cookies/login). Browser must be closed."""
+    for rel in (
+        "Default/Cache",
+        "Default/Code Cache",
+        "Default/GPUCache",
+        "Default/Service Worker/CacheStorage",
+        "ShaderCache",
+        "GrShaderCache",
+    ):
+        shutil.rmtree(profile_dir / rel, ignore_errors=True)
 
 
 def submit_prompt(page: Page, prompt: str) -> None:
@@ -67,25 +78,30 @@ def submit_prompt(page: Page, prompt: str) -> None:
 
 
 def downloads(page: Page, card_id: UUID) -> bool:
-    """Download an image and save it using the card UUID as its filename."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     buttons = page.locator(DOWNLOAD_BUTTON_SELECTOR)
-    count = buttons.count()
-    for button_index in range(count):
-        button = buttons.nth(button_index)
-        with page.expect_download() as download_info:
-            button.evaluate("(el) => el.click()")
-        download = download_info.value
-        suffix = Path(download.suggested_filename).suffix.lower()
-        if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
-            suffix = ".png"
-        save_path = DATA_DIR / f"{card_id}{suffix}"
-        download.save_as(save_path)
-        if not save_path.is_file() or save_path.stat().st_size == 0:
-            raise RuntimeError(f"Downloaded file is missing or empty: {save_path}")
-        logger.info("Saved image for card %s: %s", card_id, save_path)
-        return True
-    return False
+    if buttons.count() == 0:
+        return False
+
+    with page.expect_download(timeout=60_000) as download_info:
+        buttons.first.evaluate("(el) => el.click()")
+    download = download_info.value
+
+    suffix = Path(download.suggested_filename).suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        suffix = ".png"
+
+    tmp_path = DATA_DIR / f"{card_id}{suffix}.part"
+    final_path = DATA_DIR / f"{card_id}{suffix}"
+    try:
+        download.save_as(tmp_path)  # raises if the download was cancelled
+        if tmp_path.stat().st_size == 0:
+            raise RuntimeError(f"Empty download: {tmp_path}")
+        tmp_path.replace(final_path)  # atomic, so the uploader never sees partial files
+    finally:
+        download.delete()  # frees Playwright's temp copy
+        tmp_path.unlink(missing_ok=True)
+    return True
 
 
 def start_new_chat(page: Page) -> None:
@@ -126,52 +142,77 @@ def generate_image(page: Page, concept: MemoryConcept) -> bool:
     return False
 
 
-def playwright_worker(account: dict) -> None:
-    """Own the persistent browser and process queued concepts."""
+def run_session(playwright, account: dict, session_seconds: int) -> bool:
+    """Run one browser lifetime. Returns True to shut down, False to restart the browser."""
     name = account["name"]
+    context = playwright.chromium.launch_persistent_context(
+        user_data_dir=account["profile_dir"],
+        headless=False,
+        accept_downloads=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",  # matters a lot on Linux/Docker
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-session-crashed-bubble",
+            "--disk-cache-size=104857600",  # cap HTTP cache at ~100MB],
+        ],
+    )
+    started = time.monotonic()
     try:
-        profile_dir = account["profile_dir"]
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        page = context.pages[0] if context.pages else context.new_page()
+        page.bring_to_front()
+        page.goto(URL, wait_until="domcontentloaded")
+        try:
+            page.get_by_text(name).first.click(timeout=10_000)
+        except Exception:
+            logger.info("Account selection was not required")
 
-        with sync_playwright() as playwright:
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=False,
-                accept_downloads=True,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
+        worker_ready[name].set()
+        logger.info("[%s] Browser session started", name)
+
+        while True:
+            if time.monotonic() - started > session_seconds:
+                logger.info("[%s] Session age limit reached, recycling browser", name)
+                return False
 
             try:
-                page = context.pages[0] if context.pages else context.new_page()
+                concepts = job_queue.get(timeout=5)
+            except queue.Empty:
+                continue
 
-                keepalive_page = context.new_page()
-                keepalive_page.goto("about:blank")
-
-                page.bring_to_front()
-                page.goto(URL, wait_until="domcontentloaded")
-                try:
-                    page.get_by_text(name).first.click(timeout=10000)
-                except Exception:
-                    logger.info("Account selection was not required")
-                worker_ready[name].set()
-                logger.info("Image generation worker ready")
-                while True:
-                    concepts = job_queue.get()
-                    try:
-                        if concepts is None:
-                            break
-                        for concept in concepts:
-                            generate_image(page=page, concept=concept)
-                    finally:
-                        job_queue.task_done()
+            try:
+                if concepts is None:
+                    return True
+                for concept in concepts:
+                    generate_image(page=page, concept=concept)
             finally:
-                context.close()
-    except BaseException as exc:
-        worker_errors[name] = exc
-        worker_ready[name].set()
-        logger.exception("[%s] Worker failed", name)
+                job_queue.task_done()
+    finally:
+        context.close()  # kills Chromium and frees Playwright's temp downloads
 
+def playwright_worker(account: dict, index: int = 0) -> None:
+    name = account["name"]
+    account["profile_dir"].mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Stagger accounts so both browsers never restart at the same moment
+    session_seconds = SESSION_MAX_SECONDS + index * 900
+    while True:
+        try:
+            with sync_playwright() as playwright:
+                shutdown = run_session(playwright, account, session_seconds)
+            if shutdown:
+                return
+        except Exception as exc:
+            logger.exception("[%s] Browser session failed", name)
+            if not worker_ready[name].is_set():      # failed on first start: report it
+                worker_errors[name] = exc
+                worker_ready[name].set()
+                return
+            time.sleep(10)                           # crashed later: back off and relaunch
+
+        clear_profile_cache(account["profile_dir"])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
