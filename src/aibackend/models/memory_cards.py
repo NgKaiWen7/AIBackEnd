@@ -103,22 +103,6 @@ and highlight relevant safety precautions.
 """.strip(),
 }
 
-
-def build_system_prompt(
-    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
-    domain: PromptDomain = PromptDomain.GENERAL,
-) -> str:
-    return f"""{SYSTEM_PROMPTS[domain]}
-VISUAL STYLE
-{STYLE_PROMPTS[style]}
-
-OUTPUT CONSTRAINTS
-Use the selected visual style consistently. No contact sheets, multiple
-cards, watermarks, mockup frames, or accompanying text. Return one
-finished image only.
-"""
-
-
 class MemoryConcept(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     title: str
@@ -131,7 +115,8 @@ class MemoryConcept(BaseModel):
 class CardDeck(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     source_id: UUID
-    system_prompt: str | None = None
+    style: str | None = None
+    domain: str | None = None
     title: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     concepts: list[MemoryConcept] = Field(default_factory=list)

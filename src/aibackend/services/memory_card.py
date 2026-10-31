@@ -19,7 +19,6 @@ from aibackend.models.memory_cards import (
     MemoryCardResponse,
     MemoryConcept,
     PromptDomain,
-    build_system_prompt,
 )
 from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.repositories.memord_card import MemoryCardRepository
@@ -72,7 +71,10 @@ def format_prompt(card_deck: CardDeck):
     for card in card_deck.concepts:
         prompt = f"""
         CARD STYLE
-        {card_deck.system_prompt}
+        {card_deck.style}
+
+        CARD DOMAIN
+        {card_deck.domain}
 
         CARD TITLE
         {card.title}
@@ -93,7 +95,7 @@ def format_prompt(card_deck: CardDeck):
 
 
 async def prompt_memory_card(
-    book_id: UUID, combine_chunk: int, db: AsyncSession
+    book_id: UUID, style: CardStyle, domain: PromptDomain, combine_chunk: int, db: AsyncSession
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
     memory_card_repo = MemoryCardRepository(db)
@@ -103,7 +105,7 @@ async def prompt_memory_card(
         raise ValueError(f"Book id: {book_id} not found")
     chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id, combine_chunk)
     result = MemoryCardResponse(title=book.title)
-    deck = CardDeck(source_id=book.id, title=book.title, system_prompt="temp")
+    deck = CardDeck(source_id=book.id, title=book.title, style=style, domain=domain)
     await memory_card_repo.create_deck(deck)
     await memory_card_repo.commit()
     for chunk in chunks:
@@ -117,12 +119,13 @@ async def prompt_memory_card(
                 ],
                 think=False,
                 options={"temperature": 0.5},
-                # format=MemoryConcept.model_json_schema(),
+                format=MemoryConcept.model_json_schema(),
             )
             data = response.message.content
             if data is None:
                 data = ""
-            data = MemoryConcept(image_prompt=data, title="temp", content="temp")
+            data = MemoryConcept.model_validate_json(data)
+            data = MemoryConcept(image_prompt=data.image_prompt, title=data.title, content=data.content)
             if not data.title and not data.content and not data.image_prompt:
                 result.empty += 1
                 continue

@@ -107,18 +107,27 @@ class BookChunkRepository:
         result = await self.db.execute(
             text(
                 """
-                SELECT * FROM large_chunks
+                SELECT * FROM chunks
                 WHERE book_id = :book_id
                 """
             ),
             {"book_id": id},
         )
         chunks = []
-        for i in result.mappings():
-            data = dict(i)
+        for row in result.mappings():
+            data = dict(row)
             data.pop("embeddings")
             chunks.append(Chunk(**data))
-        return chunks
+        if combine_chunk == 1:
+            return chunks
+        combined = []
+        for i in range(0, len(chunks), combine_chunk):
+            group = chunks[i:i + combine_chunk]
+            chunk = group[0]
+            for other in group[1:]:
+                chunk.raw_text += "\n" + other.raw_text
+            combined.append(chunk)
+        return combined
 
     async def update_embedding(self, id: UUID, embeddings: list[float]):
         await self.db.execute(

@@ -41,7 +41,8 @@ class MemoryCardRepository:
             SELECT
                 d.id AS deck_id,
                 d.source_id,
-                d.system_prompt,
+                d.style,
+                d.domain,
                 d.title AS deck_title,
                 d.created_at AS deck_created_at,
                 c.id AS concept_id,
@@ -55,6 +56,8 @@ class MemoryCardRepository:
             WHERE
                 c.image_path IS NULL
                 AND c.generate = TRUE
+                AND d.style IS NOT NULL
+                AND d.domain IS NOT NULL
             ORDER BY d.id, c.id
         """)
 
@@ -69,7 +72,8 @@ class MemoryCardRepository:
                 decks[deck_id] = CardDeck(
                     id=deck_id,
                     source_id=row["source_id"],
-                    system_prompt=row["system_prompt"],
+                    style=row["style"],
+                    domain=row["domain"],
                     title=row["deck_title"],
                     created_at=row["deck_created_at"],
                     concepts=[],
@@ -84,6 +88,7 @@ class MemoryCardRepository:
                     image_path=row["image_path"],
                 )
             )
+
         return list(decks.values())
 
     async def get_cards(self, deck_id: UUID) -> CardDeck | None:
@@ -141,43 +146,51 @@ class MemoryCardRepository:
         self,
         id: UUID,
         title: str | None = None,
-        system_prompt: str | None = None,
+        style: str | None = None,
+        domain: str | None = None,
     ) -> CardDeck:
         result = await self.db.execute(
             text("""
                 UPDATE card_decks
                 SET
-                    system_prompt = COALESCE(:system_prompt, system_prompt)
+                    title = COALESCE(:title, title),
+                    style = COALESCE(:style, style),
+                    domain = COALESCE(:domain, domain)
                 WHERE id = :id
-                RETURNING id, source_id, title, system_prompt, created_at
+                RETURNING id, source_id, title, style, domain, created_at
             """),
             {
                 "id": id,
-                "system_prompt": system_prompt,
+                "title": title,
+                "style": style,
+                "domain": domain,
             },
         )
+
         deck_row = result.mappings().one_or_none()
         if deck_row is None:
             raise ValueError(f"Deck not found: {id}")
 
+        await self.db.commit()
         return CardDeck(**dict(deck_row))
 
     async def create_deck(self, deck: CardDeck) -> CardDeck:
         result = await self.db.execute(
             text("""
                 INSERT INTO card_decks (
-                    id, source_id, title, system_prompt
+                    id, source_id, title, style, domain
                 )
                 VALUES (
-                    :id, :source_id, :title, :system_prompt
+                    :id, :source_id, :title, :style, :domain
                 )
-                RETURNING id, source_id, title, system_prompt, created_at
+                RETURNING id, source_id, title, style, domain, created_at
             """),
             {
                 "id": deck.id,
                 "source_id": deck.source_id,
                 "title": deck.title,
-                "system_prompt": deck.system_prompt,
+                "style": deck.style,
+                "domain": deck.domain,
             },
         )
         deck_row = dict(result.mappings().one())

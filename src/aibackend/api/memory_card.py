@@ -12,7 +12,6 @@ from aibackend.models.memory_cards import (
     MemoryCardImportResponse,
     MemoryCardResponse,
     PromptDomain,
-    build_system_prompt,
 )
 from aibackend.repositories.memord_card import MemoryCardRepository
 from aibackend.services.memory_card import (
@@ -28,10 +27,12 @@ router = APIRouter()
 @router.post("/memory-card")
 async def generate_memory_card(
     book_id: UUID,
-    large: bool,
+    combine_chunks: int,
+    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
+    domain: PromptDomain = PromptDomain.GENERAL,
     db: AsyncSession = Depends(get_db),
 ) -> MemoryCardResponse:
-    return await prompt_memory_card(book_id, large, db)
+    return await prompt_memory_card(book_id, style, domain, combine_chunks, db)
 
 
 @router.post("/memory-card/import", status_code=201)
@@ -88,7 +89,12 @@ async def generate_images(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> 
     return await generate_memory_card_images(deck_id, db)
 
 
-@router.patch("/memory-card/deck/{deck_id}/prompt")
+@router.post("/memory-card/deck/{deck_id}/export")
+async def export_deck(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    return await export_memory_card_images(deck_id, db)
+
+
+@router.patch("/memory-card/deck/{deck_id}")
 async def patch_style(
     deck_id: UUID,
     style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
@@ -96,14 +102,25 @@ async def patch_style(
     title: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> CardDeck:
-    system_prompt = build_system_prompt(style, domain)
     repo = MemoryCardRepository(db)
-    return await repo.update_deck(deck_id, title, system_prompt)
+    return await repo.update_deck(deck_id, title, style, domain)
 
 
-@router.post("/memory-card/deck/{deck_id}/export")
-async def export_deck(deck_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
-    return await export_memory_card_images(deck_id, db)
+@router.delete("/memory-card/deck/{deck_id}/images")
+async def clear_memory_card_images(
+    deck_id: UUID, db: AsyncSession = Depends(get_db)
+) -> dict[str, int | str]:
+    repo = MemoryCardRepository(db)
+    try:
+        deleted_count = await repo.clear_images(deck_id)
+        return {"deck_id": str(deck_id), "deleted_images": deleted_count}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to clear memory-card images",
+        ) from exc
 
 
 @router.post("/memory-card/deck/export_all")
@@ -125,23 +142,6 @@ async def export_all_deck(db: AsyncSession = Depends(get_db)) -> dict:
             for deck_id, result in zip(deck_ids, results)
         },
     }
-
-
-@router.delete("/memory-card/deck/{deck_id}/images")
-async def clear_memory_card_images(
-    deck_id: UUID, db: AsyncSession = Depends(get_db)
-) -> dict[str, int | str]:
-    repo = MemoryCardRepository(db)
-    try:
-        deleted_count = await repo.clear_images(deck_id)
-        return {"deck_id": str(deck_id), "deleted_images": deleted_count}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to clear memory-card images",
-        ) from exc
 
 
 @router.put("/memory-card/cards/{card_id}/image")
