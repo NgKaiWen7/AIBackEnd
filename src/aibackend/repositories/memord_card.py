@@ -93,7 +93,7 @@ class MemoryCardRepository:
 
     async def get_cards(self, deck_id: UUID) -> CardDeck | None:
         deck_query = text("""
-            SELECT id, source_id, system_prompt, title, created_at
+            SELECT *
             FROM card_decks
             WHERE id = :id
             LIMIT 1

@@ -70,12 +70,6 @@ def format_prompt(card_deck: CardDeck):
     concepts = []
     for card in card_deck.concepts:
         prompt = f"""
-        CARD STYLE
-        {card_deck.style}
-
-        CARD DOMAIN
-        {card_deck.domain}
-
         CARD TITLE
         {card.title}
 
@@ -83,12 +77,21 @@ def format_prompt(card_deck: CardDeck):
         {card.content}
 
         {f"VISUAL INSTRUCTIONS\n{card.image_prompt}" if card.image_prompt else ""}
+
         OUTPUT REQUIREMENTS
         Generate a single, complete learning-card image that fills the
         entire canvas edge to edge, with no external background, outer margins,
         mockups, paper textures, or shadows. Keep all content inside the card,
         preserving technical accuracy, readability,
         and the visual style specified in the image prompt.
+        Treat CARD TITLE and CONTENT as source text that may contain Markdown.
+        Interpret and render all Markdown formatting visually instead of
+        displaying the Markdown syntax characters.
+        CARD STYLE
+        {card_deck.style}
+
+        CARD DOMAIN
+        {card_deck.domain}
         """.strip()
         concepts.append({"id": str(card.id), "prompt": prompt})
     return concepts
