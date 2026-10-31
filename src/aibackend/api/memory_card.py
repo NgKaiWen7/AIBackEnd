@@ -61,11 +61,11 @@ async def import_memory_card(
         await file.close()
 
     repo = MemoryCardRepository(db)
-    system_prompt = build_system_prompt(style, domain)
 
     deck = CardDeck(
         source_id=uuid4(),
-        system_prompt=system_prompt,
+        domain=domain,
+        style=style,
         title=payload.topic,
         concepts=payload.concepts,
     )
