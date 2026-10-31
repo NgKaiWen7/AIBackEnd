@@ -77,10 +77,10 @@ class BookChunkRepository:
             {"book_id": str(book_id)},
         )
 
-    async def create_chunk(self, chunk: Chunk, large: bool) -> UUID:
+    async def create_chunk(self, chunk: Chunk) -> UUID:
         result = await self.db.execute(
-            text(f"""
-                INSERT INTO {"large_chunks" if large else "chunks"} (
+            text("""
+                INSERT INTO chunks (
                     book_id,
                     position,
                     raw_text,
@@ -103,11 +103,11 @@ class BookChunkRepository:
         )
         return result.scalar_one()
 
-    async def get_chunks(self, id: UUID, large: bool) -> list[Chunk]:
+    async def get_chunks(self, id: UUID, combine_chunk: int) -> list[Chunk]:
         result = await self.db.execute(
             text(
-                f"""
-                SELECT * FROM {"large_chunks" if large else "chunks"}
+                """
+                SELECT * FROM large_chunks
                 WHERE book_id = :book_id
                 """
             ),

@@ -23,7 +23,11 @@ from aibackend.models.memory_cards import (
 )
 from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.repositories.memord_card import MemoryCardRepository
-from aibackend.utils.constant import CARD_DECKS_DIR, COMPUTE_SERVER_URL
+from aibackend.utils.constant import (
+    CARD_DECKS_DIR,
+    CARD_DECKS_EXPORT_DIR,
+    COMPUTE_SERVER_URL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,36 +66,6 @@ The image_prompt must describe the educational content to visualize, not merely 
 Return valid JSON without Markdown fences or additional commentary.
 """
 
-SYSTEM_PROMPT = """
-You are an expert technical educator. Extract the most valuable learning
-concepts from the supplied source chunk for technical learning and visual
-memory-card generation.
-
-Focus on:
-- Core principles, definitions, and mechanisms.
-- Equations, algorithms, and implementation details.
-- Important relationships, trade-offs, limitations, and failure modes.
-- Deep insights that improve technical understanding.
-
-Rules:
-- Extract only genuinely valuable main ideas; omit filler and trivial details.
-- Each concept must teach one coherent, self-contained learning objective.
-- Preserve technical accuracy, equations, assumptions, and important details.
-- Do not invent information or examples unsupported by the source.
-- Keep explanations concise but sufficiently detailed for deep understanding.
-- Describe a specific educational diagram, equation, flow, or comparison
-  that visually explains each concept.
-- Avoid redundant concepts. Prefer quality over quantity.
-
-Return:
-[Concise, self-contained explanation of the main idea, including essential
-mechanisms, equations, examples, or caveats where relevant.]
-
-If the chunk contains no valuable learning concepts, return an empty response.
-
-Do not output JSON, Markdown code fences, or introductory commentary.
-"""
-
 
 def format_prompt(card_deck: CardDeck):
     concepts = []
@@ -100,9 +74,13 @@ def format_prompt(card_deck: CardDeck):
         CARD STYLE
         {card_deck.system_prompt}
 
-        VISUAL INSTRUCTIONS
-        {card.image_prompt}
+        CARD TITLE
+        {card.title}
 
+        CONTENT
+        {card.content}
+
+        {f"VISUAL INSTRUCTIONS\n{card.image_prompt}" if card.image_prompt else ""}
         OUTPUT REQUIREMENTS
         Generate a single, complete learning-card image that fills the
         entire canvas edge to edge, with no external background, outer margins,
@@ -115,9 +93,7 @@ def format_prompt(card_deck: CardDeck):
 
 
 async def prompt_memory_card(
-    book_id: UUID,
-    large: bool,
-    db: AsyncSession,
+    book_id: UUID, combine_chunk: int, db: AsyncSession
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
     memory_card_repo = MemoryCardRepository(db)
@@ -125,7 +101,7 @@ async def prompt_memory_card(
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
         raise ValueError(f"Book id: {book_id} not found")
-    chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id, large)
+    chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id, combine_chunk)
     result = MemoryCardResponse(title=book.title)
     deck = CardDeck(source_id=book.id, title=book.title, system_prompt="temp")
     await memory_card_repo.create_deck(deck)
@@ -181,7 +157,6 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
     for card_deck in card_decks:
         deck_concepts = format_prompt(card_deck)
         concepts.extend(deck_concepts)
-
         deck_stats.append(
             {
                 "deck_id": str(card_deck.id),
@@ -237,16 +212,14 @@ async def export_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:
     if not card_deck or not card_deck.concepts:
         raise ValueError("No memory cards found for this deck")
 
-    output_dir = Path("/mnt/data/card_decks_export")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    CARD_DECKS_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     if card_deck.title:
         filename = re.sub(r"[^\w\s.-]", "", card_deck.title)
         filename = re.sub(r"\s+", "_", filename).strip("._")
-
-        pdf_path = output_dir / f"{filename or str(deck_id)}.pdf"
+        pdf_path = CARD_DECKS_EXPORT_DIR / f"{filename or str(deck_id)}.pdf"
     else:
-        pdf_path = output_dir / f"{deck_id}.pdf"
+        pdf_path = CARD_DECKS_EXPORT_DIR / f"{deck_id}.pdf"
     pdf = pymupdf.open()
     skipped_cards = []
 
@@ -307,8 +280,7 @@ async def generate_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{COMPUTE_SERVER_URL}/generate",
-                json=concepts,
+                f"{COMPUTE_SERVER_URL}/generate", json=concepts
             )
             response.raise_for_status()
 

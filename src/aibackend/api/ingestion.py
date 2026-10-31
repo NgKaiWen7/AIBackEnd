@@ -25,8 +25,8 @@ async def upload_book(
 
 
 @router.post("/ingest-book")
-async def upload_pdf(book_id: UUID, large: bool, db: AsyncSession = Depends(get_db)):
-    return await ingest_book(book_id, large, db)
+async def upload_pdf(book_id: UUID, db: AsyncSession = Depends(get_db)):
+    return await ingest_book(book_id, db)
 
 
 @router.post("/embed")

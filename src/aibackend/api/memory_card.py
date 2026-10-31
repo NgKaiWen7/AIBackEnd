@@ -34,20 +34,6 @@ async def generate_memory_card(
     return await prompt_memory_card(book_id, large, db)
 
 
-@router.post("/memory-card-batch")
-async def generate_memory_card_batch(
-    book_id: list[UUID],
-    large: bool,
-    db: AsyncSession = Depends(get_db),
-) -> list[MemoryCardResponse]:
-    responses = []
-    for current_book_id in book_id:
-        response = await prompt_memory_card(current_book_id, large, db)
-        responses.append(response)
-
-    return responses
-
-
 @router.post("/memory-card/import", status_code=201)
 async def import_memory_card(
     file: UploadFile = File(...),
@@ -66,14 +52,10 @@ async def import_memory_card(
         payload = MemoryCardImport.model_validate_json(raw)
     except ValidationError as exc:
         raise HTTPException(
-            status_code=422,
-            detail=exc.errors(include_input=False),
+            status_code=422, detail=exc.errors(include_input=False)
         ) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON file",
-        ) from exc
+        raise HTTPException(status_code=400, detail="Invalid JSON file") from exc
     finally:
         await file.close()
 

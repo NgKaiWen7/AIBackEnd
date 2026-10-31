@@ -64,7 +64,7 @@ async def create_book_from_upload(
         await file.close()
 
 
-async def ingest_book(book_id: UUID, large: bool, db: AsyncSession) -> dict:
+async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
     repo = BookChunkRepository(db)
 
     try:
@@ -72,17 +72,10 @@ async def ingest_book(book_id: UUID, large: bool, db: AsyncSession) -> dict:
         if book is None:
             raise ValueError(f"Book not found: {book_id}")
 
-        pdf_path = Path("/mnt/data") / book.source.lstrip("/")
+        pdf_path = BOOKS_DIR / book.source.lstrip("/")
         await repo.delete_chunks(book.id)
-        if large:
-            max_tokens = 1000
-        else:
-            max_tokens = 400
         chunks = pymupdf4llm.to_chunks(
-            max_tokens=max_tokens,
-            doc=pdf_path,
-            show_progress=True,
-            table_mode="isolate",
+            doc=pdf_path, show_progress=True, table_mode="isolate"
         )
         for i, chunk in enumerate(chunks):
             chunk_py = Chunk(
@@ -91,7 +84,7 @@ async def ingest_book(book_id: UUID, large: bool, db: AsyncSession) -> dict:
                 raw_text=chunk.text,
                 meta_data=" ".join(chunk.metadata.section_path),
             )
-            await repo.create_chunk(chunk_py, large)
+            await repo.create_chunk(chunk_py)
 
         await repo.commit()
         return {
