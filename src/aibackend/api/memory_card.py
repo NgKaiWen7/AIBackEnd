@@ -9,7 +9,6 @@ from aibackend.models.memory_cards import (
     CardDeck,
     CardStyle,
     MemoryCardImport,
-    MemoryCardImportResponse,
     MemoryCardResponse,
     PromptDomain,
 )
@@ -41,7 +40,7 @@ async def import_memory_card(
     style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
     domain: PromptDomain = PromptDomain.GENERAL,
     db: AsyncSession = Depends(get_db),
-) -> MemoryCardImportResponse:
+) -> CardDeck:
     if file.filename is None or not file.filename.lower().endswith(".json"):
         raise HTTPException(status_code=400, detail="A JSON file is required")
     try:
@@ -71,12 +70,7 @@ async def import_memory_card(
     )
     await repo.create_deck(deck)
     await repo.commit()
-    return MemoryCardImportResponse(
-        deck_id=deck.id,
-        source_id=deck.source_id,
-        topic=payload.topic,
-        cards_imported=len(payload.concepts),
-    )
+    return deck
 
 
 @router.post("/memory-card/queue/images")

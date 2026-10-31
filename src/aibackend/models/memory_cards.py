@@ -131,13 +131,6 @@ class MemoryCardResponse(BaseModel):
     empty: int = 0
 
 
-class MemoryCardImportResponse(BaseModel):
-    deck_id: UUID
-    source_id: UUID
-    topic: str
-    cards_imported: int
-
-
 class MemoryCardImport(BaseModel):
     topic: str = Field(min_length=1)
     concepts: list[MemoryConcept] = Field(min_length=1)
