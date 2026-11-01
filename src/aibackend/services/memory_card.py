@@ -92,9 +92,6 @@ def format_prompt(card_deck: CardDeck):
         CARD TITLE
         {card.title}
 
-        CONTENT
-        {card.content}
-
         {f"VISUAL INSTRUCTIONS\n{card.image_prompt}" if card.image_prompt else ""}
 
         OUTPUT REQUIREMENTS

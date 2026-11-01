@@ -9,11 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.models.chunking import Book, Chunk
 from aibackend.repositories.book_chunks import BookChunkRepository
+from aibackend.utils.constant import BOOKS_DIR
 
 logger = logging.getLogger(__name__)
-
-
-BOOKS_DIR = Path("/mnt/data")
 
 
 async def create_book_from_upload(
