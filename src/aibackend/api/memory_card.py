@@ -26,7 +26,7 @@ router = APIRouter()
 @router.post("/memory-card")
 async def generate_memory_card(
     book_id: UUID,
-    combine_chunks: int,
+    combine_chunks: bool,
     style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
     domain: PromptDomain = PromptDomain.GENERAL,
     db: AsyncSession = Depends(get_db),

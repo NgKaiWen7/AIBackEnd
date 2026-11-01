@@ -65,6 +65,25 @@ The image_prompt must describe the educational content to visualize, not merely 
 Return valid JSON without Markdown fences or additional commentary.
 """
 
+TEV_MERGE_CHUNK = {
+    "type": "noul",
+    "instructions": (
+        "Determine whether the next document chunk continues "
+        "the same logical content unit as the previous chunk."
+    ),
+    "criteria": {
+        "true": (
+            "Both chunks belong to the same logical content unit. "
+            "The next chunk continues the previous paragraph, "
+            "explanation, list, table, or section."
+        ),
+        "false": (
+            "The next chunk introduces an independent content unit, "
+            "a new heading, a different section, or a separate record."
+        ),
+    },
+}
+
 
 def format_prompt(card_deck: CardDeck):
     concepts = []
@@ -97,8 +116,41 @@ def format_prompt(card_deck: CardDeck):
     return concepts
 
 
+async def combine_semantic_chunks(chunks: list[Chunk]):
+    if not chunks:
+        return []
+
+    combined = []
+
+    current = chunks[0]
+    current_text = current.raw_text
+    for next_chunk in chunks[1:]:
+        response = await client.systemone(
+            model="tev1:4b",
+            state={
+                "previous_chunk": f"Meta Data{current.meta_data}:\n{current_text[-800:]}",
+                "next_chunk": f"Meta Data{next_chunk.meta_data}:\n{next_chunk.raw_text[:800]}",
+            },
+            questions={"should_merge": TEV_MERGE_CHUNK},
+        )
+        score = response.answers["should_merge"].noul
+        if score >= 0.5:
+            current_text += "\n" + next_chunk.raw_text
+        else:
+            current.raw_text = current_text
+            combined.append(current)
+
+            current = next_chunk
+            current_text = next_chunk.raw_text
+    return combined
+
+
 async def prompt_memory_card(
-    book_id: UUID, style: CardStyle, domain: PromptDomain, combine_chunk: int, db: AsyncSession
+    book_id: UUID,
+    style: CardStyle,
+    domain: PromptDomain,
+    combine_chunk: bool,
+    db: AsyncSession,
 ) -> MemoryCardResponse:
     bookchunk_repo = BookChunkRepository(db)
     memory_card_repo = MemoryCardRepository(db)
@@ -106,7 +158,9 @@ async def prompt_memory_card(
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
         raise ValueError(f"Book id: {book_id} not found")
-    chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id, combine_chunk)
+    chunks: list[Chunk] = await bookchunk_repo.get_chunks(book_id)
+    if combine_chunk:
+        chunks = await combine_semantic_chunks(chunks)
     result = MemoryCardResponse(title=book.title)
     deck = CardDeck(source_id=book.id, title=book.title, style=style, domain=domain)
     await memory_card_repo.create_deck(deck)
@@ -128,7 +182,9 @@ async def prompt_memory_card(
             if data is None:
                 data = ""
             data = MemoryConcept.model_validate_json(data)
-            data = MemoryConcept(image_prompt=data.image_prompt, title=data.title, content=data.content)
+            data = MemoryConcept(
+                image_prompt=data.image_prompt, title=data.title, content=data.content
+            )
             if not data.title and not data.content and not data.image_prompt:
                 result.empty += 1
                 continue

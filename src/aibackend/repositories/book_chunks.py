@@ -103,7 +103,7 @@ class BookChunkRepository:
         )
         return result.scalar_one()
 
-    async def get_chunks(self, id: UUID, combine_chunk: int) -> list[Chunk]:
+    async def get_chunks(self, id: UUID) -> list[Chunk]:
         result = await self.db.execute(
             text(
                 """
@@ -118,16 +118,7 @@ class BookChunkRepository:
             data = dict(row)
             data.pop("embeddings")
             chunks.append(Chunk(**data))
-        if combine_chunk == 1:
-            return chunks
-        combined = []
-        for i in range(0, len(chunks), combine_chunk):
-            group = chunks[i:i + combine_chunk]
-            chunk = group[0]
-            for other in group[1:]:
-                chunk.raw_text += "\n" + other.raw_text
-            combined.append(chunk)
-        return combined
+        return chunks
 
     async def update_embedding(self, id: UUID, embeddings: list[float]):
         await self.db.execute(
