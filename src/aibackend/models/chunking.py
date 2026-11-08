@@ -14,6 +14,7 @@ class Book(BaseModel):
     source: str | None = None
     created_at: datetime | None = None
 
+
 class Chunk(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     book_id: uuid.UUID
@@ -22,3 +23,12 @@ class Chunk(BaseModel):
     meta_data: str | None
     embeddings: list[float] | None = None
     created_at: datetime = Field(default_factory=datetime.now)
+
+class Cluster(BaseModel):
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    book_id: uuid.UUID
+    membership: list[int]
+    children: list["Cluster"] = Field(default_factory=list)
+    total_length: int
+    level: int = 0
+    summary: str | None = None

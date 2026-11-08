@@ -3,7 +3,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aibackend.models.chunking import Book, Chunk
+from aibackend.models.chunking import Book, Chunk, Cluster
+import json
 
 
 class BookChunkRepository:
@@ -76,7 +77,15 @@ class BookChunkRepository:
             """),
             {"book_id": str(book_id)},
         )
-
+        
+    async def delete_clusters(self, book_id: UUID) -> None:
+        await self.db.execute(
+            text("""
+                DELETE FROM clusters
+                WHERE book_id = :book_id
+            """),
+            {"book_id": str(book_id)},
+        )
     async def create_chunk(self, chunk: Chunk) -> UUID:
         result = await self.db.execute(
             text("""
@@ -105,18 +114,18 @@ class BookChunkRepository:
 
     async def get_chunks(self, id: UUID) -> list[Chunk]:
         result = await self.db.execute(
-            text(
-                """
+            text("""
                 SELECT * FROM chunks
                 WHERE book_id = :book_id
-                """
-            ),
+                """),
             {"book_id": id},
         )
         chunks = []
         for row in result.mappings():
             data = dict(row)
-            data.pop("embeddings")
+            data["embeddings"] = (
+                json.loads(data["embeddings"]) if data["embeddings"] is not None else None
+            )
             chunks.append(Chunk(**data))
         return chunks
 
@@ -131,13 +140,11 @@ class BookChunkRepository:
         )
 
     async def query(self, embeddings: list[float], book_id):
-        query = text(
-            """
+        query = text("""
             SELECT *
             FROM chunks ORDER BY embeddings <=> CAST(:embeddings AS vector) ASC
             LIMIT 5
-            """
-        )
+            """)
         chunks = []
         result = await self.db.execute(query, {"embeddings": str(embeddings)})
         for row in result.mappings():
@@ -145,3 +152,22 @@ class BookChunkRepository:
             data.pop("embeddings")
             chunks.append(Chunk(**data))
         return chunks
+
+
+    async def create_cluster(self, cluster: Cluster) -> UUID:
+        result = await self.db.execute(
+            text("""
+                INSERT INTO clusters (
+                    book_id, level
+                )
+                VALUES (
+                    :book_id, :level
+                )
+                RETURNING id
+            """),
+            {
+                "book_id": str(cluster.book_id),
+                "level": cluster.level,
+            },
+        )
+        return result.scalar_one()

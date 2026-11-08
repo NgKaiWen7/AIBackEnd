@@ -5,9 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.db.connection import get_db
 from aibackend.models.chunking import Book
-from aibackend.services.book_chat import chat
 from aibackend.services.chunking import create_book_from_upload, ingest_book
-from aibackend.services.embedding import embed, query_func
+from aibackend.services.embedding import embed
+from aibackend.services.raptor_chunking import raptor_embed
 
 router = APIRouter()
 
@@ -31,35 +31,9 @@ async def upload_pdf(book_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.post("/embed")
 async def embed_book(book_id: UUID, db: AsyncSession = Depends(get_db)):
-    try:
-        return await embed(book_id, db)
-
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        ) from exc
+    return await embed(book_id, db)
 
 
-@router.post("/query")
-async def query_book(
-    query: str, book_id: UUID | None = None, db: AsyncSession = Depends(get_db)
-):
-    try:
-        return await query_func(query, book_id, db)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail=str(exc),
-        ) from exc
-
-
-@router.post("/book_chat")
-async def book_chat(
-    question: str,
-    book_id: str | None = None,
-    chapter_id: str | None = None,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await chat(question, db, book_id, chapter_id)
-    return result
+@router.post("/raptor_embed")
+async def embed_raptor(book_id: UUID, db: AsyncSession = Depends(get_db)):
+    return await raptor_embed(book_id, db)

@@ -85,10 +85,7 @@ async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
             await repo.create_chunk(chunk_py)
 
         await repo.commit()
-        return {
-            "book_id": book_id,
-            "chunk_count": len(chunks),
-        }
+        return {"book_id": book_id, "chunk_count": len(chunks)}
 
     except Exception:
         await repo.rollback()

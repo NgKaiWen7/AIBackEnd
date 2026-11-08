@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 engine = create_async_engine(
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/knowledge_db"
+    "postgresql+asyncpg://postgres:postgres@localhost:5433/knowledge_db"
 )
 
 AsyncSessionLocal = async_sessionmaker(
