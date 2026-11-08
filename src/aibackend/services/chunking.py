@@ -73,7 +73,10 @@ async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
         pdf_path = BOOKS_DIR / book.source.lstrip("/")
         await repo.delete_chunks(book.id)
         chunks = pymupdf4llm.to_chunks(
-            doc=pdf_path, show_progress=True, table_mode="isolate"
+            doc=pdf_path,
+            show_progress=True,
+            max_tokens=800,
+            min_tokens=200,
         )
         for i, chunk in enumerate(chunks):
             chunk_py = Chunk(

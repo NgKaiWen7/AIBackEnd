@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from collections import defaultdict
 
 from aibackend.models.chunking import Book, Chunk, Cluster
 import json
@@ -77,7 +78,7 @@ class BookChunkRepository:
             """),
             {"book_id": str(book_id)},
         )
-        
+
     async def delete_clusters(self, book_id: UUID) -> None:
         await self.db.execute(
             text("""
@@ -86,6 +87,7 @@ class BookChunkRepository:
             """),
             {"book_id": str(book_id)},
         )
+
     async def create_chunk(self, chunk: Chunk) -> UUID:
         result = await self.db.execute(
             text("""
@@ -124,7 +126,9 @@ class BookChunkRepository:
         for row in result.mappings():
             data = dict(row)
             data["embeddings"] = (
-                json.loads(data["embeddings"]) if data["embeddings"] is not None else None
+                json.loads(data["embeddings"])
+                if data["embeddings"] is not None
+                else None
             )
             chunks.append(Chunk(**data))
         return chunks
@@ -153,16 +157,11 @@ class BookChunkRepository:
             chunks.append(Chunk(**data))
         return chunks
 
-
     async def create_cluster(self, cluster: Cluster) -> UUID:
         result = await self.db.execute(
             text("""
-                INSERT INTO clusters (
-                    book_id, level
-                )
-                VALUES (
-                    :book_id, :level
-                )
+                INSERT INTO clusters (book_id, level)
+                VALUES (:book_id, :level)
                 RETURNING id
             """),
             {
@@ -171,3 +170,54 @@ class BookChunkRepository:
             },
         )
         return result.scalar_one()
+
+    async def update_cluster(self, id: str, summary: str):
+        await self.db.execute(
+            text("""
+                UPDATE clusters
+                SET summary = :summary
+                WHERE id = :id
+            """),
+            {"id": id, "summary": summary},
+        )
+
+
+    async def get_cluster_summary(self, book_id: str, level) -> dict[str, str]:
+        await self.db.execute(text("LOAD 'age';"))
+        await self.db.execute(text('SET search_path = ag_catalog, "$user", public;'))
+        query = text(f"""
+            SELECT (cluster::text)::UUID, cl.*
+            FROM cypher('raptor_graph', $$
+                MATCH (book:Book {{id: '{book_id}'}})
+                    -[\\:CONTAINS*1..]->(cluster1\\:Cluster)
+                    -[r]-(cluster2\\:Cluster {{level: {level}}})
+                RETURN
+                    cluster1.id,
+                    label(r),
+                    cluster2.id
+            $$) AS result(
+                cluster agtype,
+                relationship_label agtype,
+                chunk agtype
+            ) join clusters cl on 
+            cl.id = (chunk::text)::UUID
+            where cl.summary is not null
+            """)
+        results = await self.db.execute(query)
+        summary_dict = defaultdict(str)
+        for result in results.mappings():
+            summary_dict[result['cluster']] += f"Previous summary:\n{result['summary']}\n"
+        return summary_dict
+        
+    async def get_largest_cluster_level(self, book_id: str) -> int | None:
+        result = await self.db.execute(
+            text("""
+                SELECT max(level) FROM clusters
+                WHERE book_id = :book_id
+            """),
+            {"book_id": book_id},
+        )
+        result = result.one_or_none()
+        if result is None:
+            return None
+        return result[0]

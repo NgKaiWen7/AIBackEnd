@@ -27,6 +27,7 @@ class Chunk(BaseModel):
 class Cluster(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     book_id: uuid.UUID
+    parent_id: uuid.UUID
     membership: list[int]
     children: list["Cluster"] = Field(default_factory=list)
     total_length: int
