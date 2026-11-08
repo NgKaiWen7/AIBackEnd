@@ -383,22 +383,22 @@ async def raptor_summarize(book_id: UUID, db: AsyncSession):
             row["cluster"]
         ] += f"Chunk Meta Data:\n{meta_data}\nText:\n{raw_text}"
 
-    # for cluster, raw_text in cluster_dict.items():
-    #     response = await ollama.AsyncClient().chat(
-    #         model="qwen3.5:4b",
-    #         messages=[
-    #             {"role": "system", "content": SYSTEM_PROMPT},
-    #             {"role": "user", "content": raw_text},
-    #         ],
-    #         think=False,
-    #         options={"temperature": 0.5},
-    #     )
-    #     if response.message.content is None:
-    #         print("Failed to generate summary")
-    #         continue
-    #     summary = response.message.content
-    #     await repo.update_cluster(cluster, summary)
-    #     await repo.commit()
+    for cluster, raw_text in cluster_dict.items():
+        response = await ollama.AsyncClient().chat(
+            model="qwen3.5:4b",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": raw_text},
+            ],
+            think=False,
+            options={"temperature": 0.5},
+        )
+        if response.message.content is None:
+            print("Failed to generate summary")
+            continue
+        summary = response.message.content
+        await repo.update_cluster(cluster, summary)
+        await repo.commit()
 
     level = await repo.get_largest_cluster_level(str(book_id))
     while level:
