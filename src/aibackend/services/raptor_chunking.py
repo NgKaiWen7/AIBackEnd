@@ -302,7 +302,7 @@ async def raptor_summarize(book_id: UUID, db: AsyncSession):
                 print("Failed to generate summary")
                 continue
             summary = response.message.content
-            await repo.update_cluster(id, "temp")
+            await repo.update_cluster(id, summary)
         level -= 1
     await repo.commit()
 
