@@ -1,4 +1,3 @@
-import uuid
 import warnings
 from uuid import UUID
 import ollama
@@ -137,6 +136,7 @@ def gmm_cluster(
             memberships.append(chunk_indices)
 
     return memberships
+
 
 async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
     repo = BookChunkRepository(db)
@@ -312,6 +312,5 @@ async def raptor_embedding(book_id: UUID, db: AsyncSession):
     clusters = await repo.get_clusters(str(book_id))
     for id, summary in clusters:
         embedding = await get_embedding(summary)
-        await repo.update_embedding(
-            id=uuid.UUID(id), embeddings=embedding, table="clusters"
-        )
+        await repo.update_embedding(id=id, embeddings=embedding, table="clusters")
+    await repo.commit()

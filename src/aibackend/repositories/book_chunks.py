@@ -140,7 +140,7 @@ class BookChunkRepository:
                 embeddings = :embeddings
                 WHERE id = :id
                 """),
-            {"embeddings": str(embeddings), "id": id},
+            {"embeddings": str(embeddings), "id": str(id)},
         )
 
     async def query(self, embeddings: list[float], book_id):
