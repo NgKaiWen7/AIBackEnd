@@ -200,6 +200,7 @@ class BookChunkRepository:
             {"id": id, "card_path": str(card_path)},
         )
         row = result.mappings().one_or_none()
+        await self.db.commit()
         if row is None:
             await self.db.rollback()
             raise HTTPException(status_code=404, detail="Memory card not found")

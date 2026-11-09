@@ -202,7 +202,6 @@ async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
                     total_length=total_length,
                     level=parent_cluster.level + 1,
                 )
-                print(cluster)
                 children.append(cluster)
             if not children:
                 raise RuntimeError("Clustering produced no children.")

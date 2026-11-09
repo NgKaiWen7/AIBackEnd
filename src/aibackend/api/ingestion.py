@@ -42,12 +42,18 @@ async def embed_book(book_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/raptor")
-async def raptor_pipeline(book_id: UUID, db: AsyncSession = Depends(get_db)):
+async def raptor_pipeline(
+    book_id: UUID,
+    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
+    domain: PromptDomain = PromptDomain.GENERAL,
+    db: AsyncSession = Depends(get_db),
+):
     await ingest_book(book_id, db)
     await embed(book_id, db)
     await raptor_clustering(book_id, db)
     await raptor_summarize(book_id, db)
     await raptor_embedding(book_id, db)
+    return await raptor_memory_cards(book_id, style, domain, db)
 
 
 @router.post("/raptor_clustering")
