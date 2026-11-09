@@ -133,10 +133,10 @@ class BookChunkRepository:
             chunks.append(Chunk(**data))
         return chunks
 
-    async def update_embedding(self, id: UUID, embeddings: list[float]):
+    async def update_embedding(self, id: UUID, embeddings: list[float], table: str):
         await self.db.execute(
-            text("""
-                UPDATE chunks SET
+            text(f"""
+                UPDATE {table} SET
                 embeddings = :embeddings
                 WHERE id = :id
                 """),
@@ -181,34 +181,50 @@ class BookChunkRepository:
             {"id": id, "summary": summary},
         )
 
-
-    async def get_cluster_summary(self, book_id: str, level) -> dict[str, str]:
+    async def get_cluster_leafs(self, book_id: str, level: int) -> dict[str, str]:
         await self.db.execute(text("LOAD 'age';"))
         await self.db.execute(text('SET search_path = ag_catalog, "$user", public;'))
+        summary_dict = defaultdict(str)
         query = text(f"""
-            SELECT (cluster::text)::UUID, cl.*
+            SELECT
+                (result.source_id::text)::UUID AS cluster_id,
+                ch.meta_data AS meta_data,
+                COALESCE(cl.summary, ch.raw_text) AS content
             FROM cypher('raptor_graph', $$
                 MATCH (book:Book {{id: '{book_id}'}})
-                    -[\\:CONTAINS*1..]->(cluster1\\:Cluster)
-                    -[r]-(cluster2\\:Cluster {{level: {level}}})
+                    -[*1..]->(c:Cluster {{level:{level}}})
+                    -[r]->(d)
                 RETURN
-                    cluster1.id,
+                    c.id,
+                    c.level,
                     label(r),
-                    cluster2.id
+                    d.id,
+                    label(d),
+                    d.level
             $$) AS result(
-                cluster agtype,
+                source_id agtype,
+                source_level agtype,
                 relationship_label agtype,
-                chunk agtype
-            ) join clusters cl on 
-            cl.id = (chunk::text)::UUID
-            where cl.summary is not null
+                target_id agtype,
+                target_label agtype,
+                target_level agtype
+            )
+            LEFT JOIN clusters cl
+                ON result.target_label::text = 'Cluster'
+                AND cl.id = (result.target_id::text)::UUID
+            LEFT JOIN chunks ch
+                ON result.target_label::text = 'Chunk'
+                AND ch.id = (result.target_id::text)::UUID;
             """)
         results = await self.db.execute(query)
-        summary_dict = defaultdict(str)
-        for result in results.mappings():
-            summary_dict[result['cluster']] += f"Previous summary:\n{result['summary']}\n"
+        for i, result in enumerate(results.mappings()):
+            context = f"Chunk: {i + 1}"
+            if result['meta_data'] is not None:
+                context += f"\n{result['meta_data']}"
+            context += f"\n{result['content']}"
+            summary_dict[result["cluster_id"]] += context
         return summary_dict
-        
+
     async def get_largest_cluster_level(self, book_id: str) -> int | None:
         result = await self.db.execute(
             text("""
@@ -221,3 +237,19 @@ class BookChunkRepository:
         if result is None:
             return None
         return result[0]
+
+    async def get_clusters(self, book_id: str) -> list[tuple[str, str]]:
+        results = await self.db.execute(
+            text("""
+                 SELECT id, summary
+                 FROM clusters
+                 WHERE book_id = :book_id
+                 """),
+            {"book_id": book_id},
+        )
+        results_list = []
+        for result in results.mappings():
+            if result["summary"] is None:
+                raise ValueError("Summary contains null value")
+            results_list.append((result["id"], result["summary"]))
+        return results_list

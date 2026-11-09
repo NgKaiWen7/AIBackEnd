@@ -7,7 +7,7 @@ from aibackend.db.connection import get_db
 from aibackend.models.chunking import Book
 from aibackend.services.chunking import create_book_from_upload, ingest_book
 from aibackend.services.embedding import embed
-from aibackend.services.raptor_chunking import raptor_embed, raptor_summarize
+from aibackend.services.raptor_chunking import raptor_clustering, raptor_summarize
 
 router = APIRouter()
 
@@ -34,9 +34,9 @@ async def embed_book(book_id: UUID, db: AsyncSession = Depends(get_db)):
     return await embed(book_id, db)
 
 
-@router.post("/raptor_embed")
-async def embed_raptor(book_id: UUID, db: AsyncSession = Depends(get_db)):
-    return await raptor_embed(book_id, db)
+@router.post("/raptor_clustering")
+async def cluster_raptor(book_id: UUID, db: AsyncSession = Depends(get_db)):
+    return await raptor_clustering(book_id, db)
 
 @router.post("/raptor_summarize")
 async def raptor_summarize_(book_id: UUID, db: AsyncSession = Depends(get_db)):

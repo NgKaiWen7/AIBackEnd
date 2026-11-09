@@ -29,7 +29,6 @@ class Cluster(BaseModel):
     book_id: uuid.UUID
     parent_id: uuid.UUID
     membership: list[int]
-    children: list["Cluster"] = Field(default_factory=list)
     total_length: int
     level: int = 0
     summary: str | None = None

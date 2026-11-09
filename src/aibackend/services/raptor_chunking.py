@@ -138,85 +138,7 @@ def gmm_cluster(
 
     return memberships
 
-
-def insert_raptor_graph(
-    connection, root_clusters: list[Cluster], chunks: list[Chunk], book_id: str
-):
-    def cypher_string(value):
-        return str(value).replace("\\", "\\\\").replace("'", "\\'")
-
-    book_id = cypher_string(book_id)
-
-    # Delete existing book and related graph nodes.
-    delete_query = f"""
-        MATCH (b:Book {{id: '{book_id}'}})
-        OPTIONAL MATCH (b)-[*0..]->(related)
-        DETACH DELETE b, related
-    """
-    connection.execCypher(delete_query)
-
-    # Create Book node.
-    create_book_query = f"""
-        CREATE (:Book {{
-            id: '{book_id}'
-        }})
-    """
-    connection.execCypher(create_book_query)
-
-    stack = []
-
-    for cluster in root_clusters:
-        stack.append((cluster, None))
-
-    while stack:
-        cluster, parent_id = stack.pop()
-
-        cluster_id = str(UUID(str(cluster.id)))
-        cluster_id = cypher_string(cluster_id)
-
-        # Create the cluster and connect it to its parent.
-        if parent_id is None:
-            query = f"""
-                MATCH (b:Book {{id: '{book_id}'}})
-                CREATE (c:Cluster {{
-                    id: '{cluster_id}',
-                    level: {cluster.level}
-                }})
-                CREATE (b)-[:CONTAINS]->(c)
-            """
-        else:
-            parent_id = cypher_string(parent_id)
-
-            query = f"""
-                MATCH (p:Cluster {{id: '{parent_id}'}})
-                CREATE (c:Cluster {{
-                    id: '{cluster_id}',
-                    level: {cluster.level}
-                }})
-                CREATE (p)-[:CONTAINS]->(c)
-            """
-
-        connection.execCypher(query)
-
-        # Connect leaf clusters to their chunks.
-        if not cluster.children:
-            for chunk_id in cluster.membership:
-                chunk_uuid = cypher_string(chunks[chunk_id].id)
-
-                query = f"""
-                    MATCH (c:Cluster {{id: '{cluster_id}'}})
-                    MERGE (ch:Chunk {{id: '{chunk_uuid}'}})
-                    MERGE (c)-[:SUMMARIZES]->(ch)
-                """
-
-                connection.execCypher(query)
-
-        # Process children.
-        for child in reversed(cluster.children):
-            stack.append((child, cluster_id))
-
-
-async def raptor_embed(book_id: UUID, db: AsyncSession) -> dict:
+async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
     repo = BookChunkRepository(db)
     book = await repo.get_book(book_id)
     if book is None:
@@ -228,7 +150,9 @@ async def raptor_embed(book_id: UUID, db: AsyncSession) -> dict:
     for chunk in chunks:
         if chunk.embeddings is None:
             chunk.embeddings = await get_embedding(chunk.raw_text)
-            await repo.update_embedding(id=chunk.id, embeddings=chunk.embeddings)
+            await repo.update_embedding(
+                id=chunk.id, embeddings=chunk.embeddings, table="chunks"
+            )
     await repo.delete_clusters(book_id)
 
     # Connect to the graph database
@@ -253,7 +177,7 @@ async def raptor_embed(book_id: UUID, db: AsyncSession) -> dict:
     for chunk in chunks:
         embeddings.append(chunk.embeddings)
     embeddings = np.stack(embeddings)
-    # reduced_embeddings = reduce_embeddings(embeddings, n_components=10, n_neighbors=30)
+    embeddings = reduce_embeddings(embeddings, n_components=100, n_neighbors=30)
     memberships = gmm_cluster(embeddings, threshold=0.1)
 
     clusters: list[Cluster] = []
@@ -281,15 +205,25 @@ async def raptor_embed(book_id: UUID, db: AsyncSession) -> dict:
             total_clusters += 1
             clusters_by_level[parent_cluster.level] += 1
             parent_cluster.id = await repo.create_cluster(parent_cluster)
+            query = f"""
+                MATCH (p:{'Book' if parent_cluster.level == 0 else 'Cluster'}
+                 {{id: '{parent_cluster.parent_id}'}})
+                CREATE (c:Cluster {{
+                    id: '{parent_cluster.id}',
+                    level: {parent_cluster.level}
+                }})
+                CREATE (p)-[:CONTAINS]->(c)
+            """
+            connection.execCypher(query)
             if parent_cluster.total_length <= 8000:
                 for child in parent_cluster.membership:
                     query = f"""
-                        MATCH (p:{'Book' if parent_cluster.level == 0 else 'Cluster'}
-                        {{id: '{parent_cluster.parent_id}'}})
+                        MATCH (p:Cluster
+                        {{id: '{parent_cluster.id}'}})
                         CREATE (c:Chunk {{
                             id: '{chunks[child].id}'
                         }})
-                        CREATE (p)-[:CONTAINS]->(c)
+                        CREATE (p)-[:SUMMARIZES]->(c)
                     """
                     connection.execCypher(query)
                 continue
@@ -317,20 +251,12 @@ async def raptor_embed(book_id: UUID, db: AsyncSession) -> dict:
                     total_length=total_length,
                     level=parent_cluster.level + 1,
                 )
+                print(cluster)
                 children.append(cluster)
             if not children:
                 raise RuntimeError("Clustering produced no children.")
             next_level.extend(children)
-            query = f"""
-                MATCH (p:{'Book' if parent_cluster.level == 0 else 'Cluster'}
-                 {{id: '{parent_cluster.parent_id}'}})
-                CREATE (c:Cluster {{
-                    id: '{parent_cluster.id}',
-                    level: {parent_cluster.level}
-                }})
-                CREATE (p)-[:CONTAINS]->(c)
-            """
-            connection.execCypher(query)
+
         if not next_level:
             break
         current_level = next_level
@@ -356,61 +282,18 @@ async def raptor_summarize(book_id: UUID, db: AsyncSession):
     repo = BookChunkRepository(db)
     await db.execute(text("LOAD 'age';"))
     await db.execute(text('SET search_path = ag_catalog, "$user", public;'))
-    query = f"""
-        SELECT (cluster::text)::UUID, ch.meta_data, raw_text
-        FROM cypher('raptor_graph', $$
-            MATCH (book\\:Book {{id: '{book_id}'}})
-                -[\\:CONTAINS*1..]->(cluster\\:Cluster)
-                -[r]-(chunk\\:Chunk)
-            RETURN
-                cluster.id,
-                label(r),
-                chunk.id
-        $$) AS result(
-            cluster agtype,
-            relationship_label agtype,
-            chunk agtype
-        ) join chunks ch on 
-        ch.id = (chunk::text)::UUID
-    """
-    query = text(query)
-    result = await db.execute(query)
-    cluster_dict = defaultdict(str)
-    for row in result.mappings():
-        meta_data = row["meta_data"]
-        raw_text = row["raw_text"]
-        cluster_dict[
-            row["cluster"]
-        ] += f"Chunk Meta Data:\n{meta_data}\nText:\n{raw_text}"
-
-    for cluster, raw_text in cluster_dict.items():
-        response = await ollama.AsyncClient().chat(
-            model="qwen3.5:4b",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": raw_text},
-            ],
-            think=False,
-            options={"temperature": 0.5},
-        )
-        if response.message.content is None:
-            print("Failed to generate summary")
-            continue
-        summary = response.message.content
-        await repo.update_cluster(cluster, summary)
-        await repo.commit()
-
-    level = await repo.get_largest_cluster_level(str(book_id))
-    while level:
-        previous_level_summary = await repo.get_cluster_summary(str(book_id), level)
-        if len(previous_level_summary) == 0:
-            break
-        for cluster_id, raw_text in previous_level_summary.items():
+    max_level = await repo.get_largest_cluster_level(str(book_id))
+    if max_level is None:
+        raise ValueError("Unable to get any cluster levels")
+    level = max_level
+    while level >= 0:
+        summaries = await repo.get_cluster_leafs(str(book_id), level)
+        for id, context in summaries.items():
             response = await ollama.AsyncClient().chat(
                 model="qwen3.5:4b",
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": raw_text},
+                    {"role": "user", "content": context},
                 ],
                 think=False,
                 options={"temperature": 0.5},
@@ -419,6 +302,16 @@ async def raptor_summarize(book_id: UUID, db: AsyncSession):
                 print("Failed to generate summary")
                 continue
             summary = response.message.content
-            await repo.update_cluster(cluster_id, summary)
-            await repo.commit()
+            await repo.update_cluster(id, "temp")
         level -= 1
+    await repo.commit()
+
+
+async def raptor_embedding(book_id: UUID, db: AsyncSession):
+    repo = BookChunkRepository(db)
+    clusters = await repo.get_clusters(str(book_id))
+    for id, summary in clusters:
+        embedding = await get_embedding(summary)
+        await repo.update_embedding(
+            id=uuid.UUID(id), embeddings=embedding, table="clusters"
+        )
