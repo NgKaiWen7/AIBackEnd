@@ -9,10 +9,17 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 from sqlalchemy.ext.asyncio import AsyncSession
 from umap import UMAP
+import httpx
 from aibackend.models.chunking import Chunk, Cluster
 from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.services.chunking import ingest_book
 from aibackend.utils.embed import get_embedding
+from aibackend.models.memory_cards import PromptDomain, CardStyle, STYLE_PROMPTS, SYSTEM_PROMPTS, CardDeck
+from aibackend.utils.constant import (
+    CARD_DECKS_DIR,
+    CARD_DECKS_EXPORT_DIR,
+    COMPUTE_SERVER_URL,
+)
 
 DSN = "host=localhost port=5433 dbname=knowledge_db user=postgres password=postgres"
 GRAPH_NAME = "raptor_graph"
@@ -36,62 +43,6 @@ def reduce_embeddings(
     )
     reduced_embeddings = reducer.fit_transform(embeddings)
     return reduced_embeddings.astype(np.float32)
-
-
-def select_gmm_by_bic(
-    embeddings: np.ndarray, max_components: int = 50
-) -> tuple[GaussianMixture, dict[int, float]]:
-    n_samples, n_dimensions = embeddings.shape
-
-    if n_samples < 2:
-        raise ValueError("At least 2 samples are required.")
-
-    if max_components < 1:
-        raise ValueError("max_components must be at least 1.")
-
-    if not np.isfinite(embeddings).all():
-        raise ValueError("Embeddings contain NaN or infinity.")
-
-    upper_bound = min(max_components, n_samples - 1)
-
-    best_model = None
-    best_bic = float("inf")
-
-    bic_scores = {}
-
-    for n_components in range(1, upper_bound + 1):
-        model = GaussianMixture(
-            n_components=n_components,
-            covariance_type="full",
-            reg_covar=1e-6,
-            n_init=3,
-            max_iter=300,
-            random_state=224,
-        )
-
-        try:
-            model.fit(embeddings)
-
-        except (ValueError, np.linalg.LinAlgError, FloatingPointError) as exc:
-            warnings.warn(f"GMM with K={n_components} failed: {exc}", stacklevel=2)
-            continue
-        if not model.converged_:
-            warnings.warn(f"GMM with K={n_components} did not converge.", stacklevel=2)
-        bic = float(model.bic(embeddings))
-        bic_scores[n_components] = bic
-        print(f"GMM components: {n_components:3d} | BIC: {bic:.4f}")
-        if bic < best_bic:
-            best_bic = bic
-            best_model = model
-    if best_model is None:
-        raise RuntimeError("Unable to fit a valid GMM model.")
-
-    selected_k = best_model.n_components
-    if selected_k == upper_bound:
-        warnings.warn(
-            "The selected K is at the upper search boundary. Consider increasing max_components."
-        )
-    return best_model, bic_scores
 
 
 def gmm_cluster(
@@ -314,3 +265,38 @@ async def raptor_embedding(book_id: UUID, db: AsyncSession):
         embedding = await get_embedding(summary)
         await repo.update_embedding(id=id, embeddings=embedding, table="clusters")
     await repo.commit()
+
+
+async def raptor_memory_cards(
+    book_id: UUID, style: CardStyle, domain: PromptDomain, db: AsyncSession
+):
+    bookchunk_repo = BookChunkRepository(db)
+    book = await bookchunk_repo.get_book(book_id)
+    if book is None:
+        raise ValueError(f"Book id: {book_id} not found")
+    clusters = await bookchunk_repo.get_clusters(str(book_id))
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        payload = []
+        for id, summary in clusters:
+            prompt = f"""
+            CARD STYLE
+            {STYLE_PROMPTS[style]}
+
+            CARD DOMAIN
+            {SYSTEM_PROMPTS[domain]}
+            
+            OUTPUT REQUIREMENTS
+            Generate a single, complete learning-card image that fills the
+            entire canvas edge to edge, with no external background, outer margins,
+            mockups, paper textures, or shadows. Keep all content inside the card,
+            preserving technical accuracy, readability,
+            and the visual style specified in the image prompt.
+            Visualize the card content below:
+            {summary}
+            """.strip()
+            payload.append({"id": str(id), "prompt": prompt})
+        response = await client.post(
+            f"{COMPUTE_SERVER_URL}/generate",
+            json=payload,
+        )
+        response.raise_for_status()

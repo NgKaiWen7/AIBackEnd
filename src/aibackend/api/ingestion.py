@@ -11,7 +11,10 @@ from aibackend.services.raptor_chunking import (
     raptor_clustering,
     raptor_summarize,
     raptor_embedding,
+    raptor_memory_cards,
 )
+from aibackend.models.memory_cards import CardStyle, PromptDomain
+from aibackend.repositories.book_chunks import BookChunkRepository
 
 router = APIRouter()
 
@@ -60,3 +63,22 @@ async def raptor_summarize_(book_id: UUID, db: AsyncSession = Depends(get_db)):
 @router.post("/raptor_embedding")
 async def raptor_embedding_(book_id: UUID, db: AsyncSession = Depends(get_db)):
     return await raptor_embedding(book_id, db)
+
+
+@router.post("/raptor_memory_cards")
+async def raptor_memory_cards_(
+    book_id: UUID,
+    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
+    domain: PromptDomain = PromptDomain.GENERAL,
+    db: AsyncSession = Depends(get_db),
+):
+    return await raptor_memory_cards(book_id, style, domain, db)
+
+
+@router.put("/memory-card/cards/{card_id}/image")
+async def update_memory_card_image(
+    card_id: UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)
+) -> dict[str, str]:
+    repo = BookChunkRepository(db)
+    image_path = await repo.update_cluster_image(str(card_id), file)
+    return {"card_id": str(card_id), "image_path": image_path}

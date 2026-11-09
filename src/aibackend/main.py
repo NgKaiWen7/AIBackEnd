@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="AI Backend",
     version="0.1.0",
-    lifespan=lifespan,
+    # lifespan=lifespan,
 )
 
 app.include_router(ingestion_router)

@@ -1,11 +1,13 @@
 from uuid import UUID
-
+import asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from collections import defaultdict
-
+from fastapi import HTTPException, UploadFile
 from aibackend.models.chunking import Book, Chunk, Cluster
 import json
+from pathlib import Path
+from aibackend.utils.constant import RAPTOR_CARD_DECKS_DIR
 
 
 class BookChunkRepository:
@@ -181,6 +183,35 @@ class BookChunkRepository:
             {"id": id, "summary": summary},
         )
 
+    async def update_cluster_image(self, id: str, file: UploadFile):
+        suffix = Path(file.filename or "").suffix.lower()
+        allowed_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+        if suffix not in allowed_extensions:
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+        card_path = RAPTOR_CARD_DECKS_DIR / f"{id}{suffix}"
+        RAPTOR_CARD_DECKS_DIR.mkdir(parents=True, exist_ok=True)
+        result = await self.db.execute(
+            text("""
+                UPDATE clusters
+                SET card_path = :card_path
+                WHERE id = :id
+                RETURNING id
+            """),
+            {"id": id, "card_path": str(card_path)},
+        )
+        row = result.mappings().one_or_none()
+        if row is None:
+            await self.db.rollback()
+            raise HTTPException(status_code=404, detail="Memory card not found")
+        try:
+            content = await file.read()
+            if not content:
+                raise HTTPException(status_code=400, detail="Uploaded image is empty")
+            await asyncio.to_thread(card_path.write_bytes, content)
+        except Exception:
+            await self.db.rollback()
+        return str(card_path)
+
     async def get_cluster_leafs(self, book_id: str, level: int) -> dict[str, str]:
         await self.db.execute(text("LOAD 'age';"))
         await self.db.execute(text('SET search_path = ag_catalog, "$user", public;'))
@@ -219,7 +250,7 @@ class BookChunkRepository:
         results = await self.db.execute(query)
         for i, result in enumerate(results.mappings()):
             context = f"Chunk: {i + 1}"
-            if result['meta_data'] is not None:
+            if result["meta_data"] is not None:
                 context += f"\n{result['meta_data']}"
             context += f"\n{result['content']}"
             summary_dict[result["cluster_id"]] += context

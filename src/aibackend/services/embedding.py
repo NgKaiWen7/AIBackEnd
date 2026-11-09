@@ -18,7 +18,7 @@ async def embed(book_id: UUID, db: AsyncSession) -> dict:
 
         for chunk in chunks:
             embedding = await get_embedding(chunk.raw_text)
-            await repo.update_embedding(id=chunk.id, embeddings=embedding)
+            await repo.update_embedding(id=chunk.id, embeddings=embedding, table='chunks')
         await repo.commit()
 
         return {"book_id": book_id, "embedded_count": len(chunks)}
