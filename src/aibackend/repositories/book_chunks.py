@@ -205,21 +205,29 @@ class BookChunkRepository:
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded image is empty")
-        card_path = RAPTOR_CARD_DECKS_DIR / f"{id}{suffix}"
         try:
             result = await self.db.execute(
                 text("""
-                    UPDATE chunks
-                    SET card_path = :card_path
+                    SELECT book_id
+                    FROM chunks
                     WHERE id = :id
-                    RETURNING id
+                    FOR UPDATE
                 """),
-                {"id": id, "card_path": str(card_path)},
+                {"id": id},
             )
             row = result.mappings().one_or_none()
             if row is None:
                 raise HTTPException(status_code=404, detail="Memory card not found")
-            RAPTOR_CARD_DECKS_DIR.mkdir(parents=True, exist_ok=True)
+            card_path = RAPTOR_CARD_DECKS_DIR / str(row["book_id"]) / f"{id}{suffix}"
+            await self.db.execute(
+                text("""
+                    UPDATE chunks
+                    SET card_path = :card_path
+                    WHERE id = :id
+                """),
+                {"id": id, "card_path": str(card_path)},
+            )
+            card_path.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(card_path.write_bytes, content)
             await self.db.commit()
         except Exception:
