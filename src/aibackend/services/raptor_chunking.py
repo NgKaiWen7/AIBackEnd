@@ -1,4 +1,3 @@
-import warnings
 import re
 from pathlib import Path
 from uuid import UUID
@@ -6,7 +5,6 @@ import ollama
 import pymupdf
 from fastapi import HTTPException
 from PIL import Image
-import asyncio
 from collections import defaultdict
 from sqlalchemy import text
 import age
@@ -19,9 +17,13 @@ from aibackend.models.chunking import Chunk, Cluster
 from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.services.chunking import ingest_book
 from aibackend.utils.embed import get_embedding
-from aibackend.models.memory_cards import PromptDomain, CardStyle, STYLE_PROMPTS, SYSTEM_PROMPTS, CardDeck
+from aibackend.models.memory_cards import (
+    PromptDomain,
+    CardStyle,
+    STYLE_PROMPTS,
+    SYSTEM_PROMPTS,
+)
 from aibackend.utils.constant import (
-    CARD_DECKS_DIR,
     CARD_DECKS_EXPORT_DIR,
     COMPUTE_SERVER_URL,
 )
@@ -102,12 +104,15 @@ async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
     chunks: list[Chunk] = await repo.get_chunks(book_id)
     if len(chunks) == 0:
         await ingest_book(book_id, db)
+        chunks = await repo.get_chunks(book_id)
+    if not chunks:
+        raise ValueError("No chunks found for this book")
 
     for chunk in chunks:
         if chunk.embeddings is None:
             chunk.embeddings = await get_embedding(chunk.raw_text)
             await repo.update_embedding(
-                id=chunk.id, embeddings=chunk.embeddings, table="chunks"
+                id=chunk.id, embeddings=chunk.embeddings
             )
     await repo.delete_clusters(book_id)
 
@@ -153,7 +158,7 @@ async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
     # Build hierarchical clusters
     root_clusters = clusters
     current_level = root_clusters
-    total_clusters = len(root_clusters)
+    total_clusters = 0
     clusters_by_level: dict[int, int] = defaultdict(int)
     while True:
         next_level: list[Cluster] = []
@@ -177,7 +182,8 @@ async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
                         MATCH (p:Cluster
                         {{id: '{parent_cluster.id}'}})
                         CREATE (c:Chunk {{
-                            id: '{chunks[child].id}'
+                            id: '{chunks[child].id}',
+                            level: -1
                         }})
                         CREATE (p)-[:SUMMARIZES]->(c)
                     """
@@ -267,7 +273,7 @@ async def raptor_embedding(book_id: UUID, db: AsyncSession):
     clusters = await repo.get_clusters(str(book_id))
     for id, summary in clusters:
         embedding = await get_embedding(summary)
-        await repo.update_embedding(id=id, embeddings=embedding, table="clusters")
+        await repo.update_embedding(id=id, embeddings=embedding)
     await repo.commit()
 
 
@@ -311,7 +317,7 @@ async def export_raptor_images(book_id: UUID, db: AsyncSession) -> dict:
     book = await repo.get_book(book_id)
     if book is None:
         raise HTTPException(status_code=404, detail="Book not found")
-    clusters = await repo.get_cluster_images(book_id)
+    clusters = await repo.get_chunk_images(book_id)
     if not clusters:
         raise HTTPException(status_code=404, detail="No memory cards found for this book")
 

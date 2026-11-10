@@ -92,5 +92,5 @@ async def update_memory_card_image(
     card_id: UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)
 ) -> dict[str, str]:
     repo = BookChunkRepository(db)
-    image_path = await repo.update_cluster_image(str(card_id), file)
+    image_path = await repo.update_chunk_image(str(card_id), file)
     return {"card_id": str(card_id), "image_path": image_path}

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 
 class Book(BaseModel):
@@ -18,11 +18,14 @@ class Book(BaseModel):
 class Chunk(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     book_id: uuid.UUID
-    position: int
+    position: int | None = None
+    level: int = -1
     raw_text: str
-    meta_data: str | None
+    meta_data: JsonValue = None
+    card_path: str | None = None
     embeddings: list[float] | None = None
     created_at: datetime = Field(default_factory=datetime.now)
+
 
 class Cluster(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)

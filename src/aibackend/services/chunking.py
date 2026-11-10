@@ -83,7 +83,7 @@ async def ingest_book(book_id: UUID, db: AsyncSession) -> dict:
                 book_id=book.id,
                 position=i,
                 raw_text=chunk.text,
-                meta_data=" ".join(chunk.metadata.section_path),
+                meta_data={"section_path": chunk.metadata.section_path},
             )
             await repo.create_chunk(chunk_py)
 
