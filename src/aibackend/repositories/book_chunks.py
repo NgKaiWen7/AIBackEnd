@@ -263,8 +263,6 @@ class BookChunkRepository:
         results = await self.db.execute(query, {"book_id": book_id})
         for i, result in enumerate(results.mappings()):
             context = f"Chunk: {i + 1}"
-            if result["meta_data"] is not None:
-                context += f"\n{result['meta_data']}"
             context += f"\n{result['content']}"
             summary_dict[result["cluster_id"]] += context + "\n\n"
         return summary_dict
