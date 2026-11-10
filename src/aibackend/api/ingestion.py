@@ -12,6 +12,7 @@ from aibackend.services.raptor_chunking import (
     raptor_summarize,
     raptor_embedding,
     raptor_memory_cards,
+    export_raptor_images,
 )
 from aibackend.models.memory_cards import CardStyle, PromptDomain
 from aibackend.repositories.book_chunks import BookChunkRepository
@@ -79,6 +80,11 @@ async def raptor_memory_cards_(
     db: AsyncSession = Depends(get_db),
 ):
     return await raptor_memory_cards(book_id, style, domain, db)
+
+
+@router.post("/raptor/export")
+async def export_raptor(book_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    return await export_raptor_images(book_id, db)
 
 
 @router.put("/memory-card/cards/{card_id}/image")

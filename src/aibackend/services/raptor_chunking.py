@@ -1,6 +1,11 @@
 import warnings
+import re
+from pathlib import Path
 from uuid import UUID
 import ollama
+import pymupdf
+from fastapi import HTTPException
+from PIL import Image
 import asyncio
 from collections import defaultdict
 from sqlalchemy import text
@@ -299,3 +304,46 @@ async def raptor_memory_cards(
             json=payload,
         )
         response.raise_for_status()
+
+
+async def export_raptor_images(book_id: UUID, db: AsyncSession) -> dict:
+    repo = BookChunkRepository(db)
+    book = await repo.get_book(book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    clusters = await repo.get_cluster_images(book_id)
+    if not clusters:
+        raise HTTPException(status_code=404, detail="No memory cards found for this book")
+
+    export_dir = CARD_DECKS_EXPORT_DIR / "raptor"
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    filename = re.sub(r"[^\w\s.-]", "", book.title or "")
+    filename = re.sub(r"\s+", "_", filename).strip("._")
+    pdf_path = export_dir / f"{filename or str(book_id)}.pdf"
+    pdf = pymupdf.open()
+    skipped_cards = []
+
+    try:
+        for card_id, card_path in clusters:
+            if not card_path or not Path(card_path).is_file():
+                skipped_cards.append(str(card_id))
+                continue
+
+            with Image.open(card_path) as image:
+                width, height = image.size
+
+            page = pdf.new_page(width=width, height=height)
+            page.insert_image(page.rect, filename=card_path)
+
+        if pdf.page_count > 0:
+            pdf.save(str(pdf_path), garbage=4, deflate=True)
+    finally:
+        pdf.close()
+
+    return {
+        "book_id": str(book_id),
+        "pdf_path": str(pdf_path.resolve()),
+        "exported_count": len(clusters) - len(skipped_cards),
+        "skipped_cards": skipped_cards,
+    }

@@ -270,6 +270,18 @@ class BookChunkRepository:
             return None
         return result[0]
 
+    async def get_cluster_images(self, book_id: UUID) -> list[tuple[UUID, str | None]]:
+        results = await self.db.execute(
+            text("""
+                SELECT id, card_path
+                FROM clusters
+                WHERE book_id = :book_id
+                ORDER BY level, id
+            """),
+            {"book_id": book_id},
+        )
+        return [(row["id"], row["card_path"]) for row in results.mappings()]
+
     async def get_clusters(self, book_id: str) -> list[tuple[str, str]]:
         results = await self.db.execute(
             text("""
