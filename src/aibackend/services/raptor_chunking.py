@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 from uuid import UUID
@@ -30,6 +31,7 @@ from aibackend.utils.constant import (
 
 DSN = "host=localhost port=5433 dbname=knowledge_db user=postgres password=postgres"
 GRAPH_NAME = "raptor_graph"
+logger = logging.getLogger(__name__)
 
 
 def reduce_embeddings(
@@ -154,7 +156,7 @@ async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
         )
         clusters.append(cluster)
 
-    print(f"Initial clusters: {len(clusters)}")
+    logger.info("Initial clusters: %d", len(clusters))
     # Build hierarchical clusters
     root_clusters = clusters
     current_level = root_clusters
@@ -195,8 +197,11 @@ async def raptor_clustering(book_id: UUID, db: AsyncSession) -> dict:
                 threshold=0.1,
                 n_components=min(5, len(parent_cluster.membership)),
             )
-            print(
-                f"Cluster {parent_cluster.id} produced {len(sub_memberships)} sub-clusters in level {parent_cluster.level}"
+            logger.info(
+                "Cluster %s produced %d sub-clusters at level %d",
+                parent_cluster.id,
+                len(sub_memberships),
+                parent_cluster.level,
             )
             children: list[Cluster] = []
             for sub_membership in sub_memberships:
@@ -260,7 +265,7 @@ async def raptor_summarize(book_id: UUID, db: AsyncSession):
                 options={"temperature": 0.5},
             )
             if response.message.content is None:
-                print("Failed to generate summary")
+                logger.warning("Failed to generate summary for cluster %s", id)
                 continue
             summary = response.message.content
             await repo.update_cluster(id, summary)
