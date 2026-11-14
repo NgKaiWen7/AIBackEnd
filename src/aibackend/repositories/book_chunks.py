@@ -23,7 +23,7 @@ class BookChunkRepository:
     async def create_book(self, book: Book) -> Book:
         result = await self.db.execute(
             text("""
-                INSERT INTO books (
+                INSERT INTO study_source (
                     id,
                     title,
                     category,
@@ -64,7 +64,7 @@ class BookChunkRepository:
         result = await self.db.execute(
             text("""
                 SELECT *
-                FROM books
+                FROM study_source
                 WHERE id = :book_id
             """),
             {"book_id": book_id},
