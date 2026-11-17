@@ -13,21 +13,13 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 from sqlalchemy.ext.asyncio import AsyncSession
 from umap import UMAP
-import httpx
 from aibackend.models.chunking import Chunk, Cluster
 from aibackend.repositories.book_chunks import BookChunkRepository
+from aibackend.services.memory_card import send_all_image
 from aibackend.services.chunking import ingest_book
 from aibackend.utils.embed import get_embedding
-from aibackend.models.memory_cards import (
-    PromptDomain,
-    CardStyle,
-    STYLE_PROMPTS,
-    SYSTEM_PROMPTS,
-)
-from aibackend.utils.constant import (
-    CARD_DECKS_EXPORT_DIR,
-    COMPUTE_SERVER_URL,
-)
+from aibackend.models.memory_cards import PromptDomain, CardStyle
+from aibackend.utils.constant import CARD_DECKS_EXPORT_DIR
 
 DSN = "host=localhost port=5433 dbname=knowledge_db user=postgres password=postgres"
 GRAPH_NAME = "raptor_graph"
@@ -289,32 +281,10 @@ async def raptor_memory_cards(
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
         raise ValueError(f"Book id: {book_id} not found")
-    clusters = await bookchunk_repo.get_clusters(str(book_id))
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = []
-        for id, summary in clusters:
-            prompt = f"""
-            CARD STYLE
-            {STYLE_PROMPTS[style]}
-
-            CARD DOMAIN
-            {SYSTEM_PROMPTS[domain]}
-            
-            OUTPUT REQUIREMENTS
-            Generate a single, complete learning-card image that fills the
-            entire canvas edge to edge, with no external background, outer margins,
-            mockups, paper textures, or shadows. Keep all content inside the card,
-            preserving technical accuracy, readability,
-            and the visual style specified in the image prompt.
-            Visualize the card content below:
-            {summary}
-            """.strip()
-            payload.append({"id": str(id), "prompt": prompt})
-        response = await client.post(
-            f"{COMPUTE_SERVER_URL}/generate",
-            json=payload,
-        )
-        response.raise_for_status()
+    # Image jobs are now stored directly on chunks and processed by the shared
+    # scheduler/queue. Style and domain remain accepted for API compatibility.
+    del style, domain
+    return await send_all_image(db)
 
 
 async def export_raptor_images(book_id: UUID, db: AsyncSession) -> dict:

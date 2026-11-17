@@ -65,6 +65,14 @@ The image_prompt must describe the educational content to visualize, not merely 
 Return valid JSON without Markdown fences or additional commentary.
 """
 
+CHUNK_IMAGE_PROMPT = """
+Create a single, complete technical learning-card image from the source chunk.
+Keep the facts, terminology, equations, and relationships accurate. Use a clear
+title, concise labelled diagrams or flows where useful, and make all text
+legible. Fill the canvas with the card: no external background, paper mockup,
+or decorative border. Return only the finished card image.
+""".strip()
+
 TEV_MERGE_CHUNK = {
     "type": "noul",
     "instructions": (
@@ -200,19 +208,21 @@ async def prompt_memory_card(
 
 
 async def send_all_image(db: AsyncSession) -> dict[str, Any]:
+    """Upload completed images, then queue pending deck cards and chunks."""
     # Upload previously generated images first.
     async with httpx.AsyncClient(timeout=300) as client:
         upload_response = await client.post(
-            "http://192.168.0.115:8000/upload-generated-images"
+            "http://localhost:8000/upload-generated-images"
         )
         upload_response.raise_for_status()
 
     repo = MemoryCardRepository(db)
+    chunk_repo = BookChunkRepository(db)
     card_decks = await repo.queue_all()
+    chunks = await chunk_repo.queue_image_chunks()
 
     concepts = []
     deck_stats = []
-
     for card_deck in card_decks:
         deck_concepts = format_prompt(card_deck)
         concepts.extend(deck_concepts)
@@ -223,6 +233,13 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
                 "concepts_count": len(deck_concepts),
             }
         )
+    concepts.extend(
+        {
+            "id": str(chunk_id),
+            "prompt": f"{CHUNK_IMAGE_PROMPT}\n\nSOURCE CHUNK\n{raw_text}",
+        }
+        for chunk_id, raw_text in chunks
+    )
 
     # Submit concepts to the image-generation server.
     if len(concepts) > 0:
@@ -232,8 +249,10 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
                 json=concepts,
             )
             response.raise_for_status()
-        ids = [concept["id"] for concept in concepts]
-        await repo.update_queue(ids)
+        await repo.update_queue(
+            [concept.id for deck in card_decks for concept in deck.concepts]
+        )
+        await chunk_repo.update_image_queue([chunk_id for chunk_id, _ in chunks])
         await db.commit()
         try:
             generation_result = response.json()
@@ -249,6 +268,7 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
             "status": "success",
             "stats": {
                 "decks_found": len(card_decks),
+                "chunks_submitted": len(chunks),
                 "concepts_submitted": len(concepts),
                 "decks": deck_stats,
             },
@@ -261,7 +281,7 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
                 "result": generation_result,
             },
         }
-    return {"status": "success", "stats": {"decks_found": 0}}
+    return {"status": "success", "stats": {"decks_found": 0, "chunks_submitted": 0}}
 
 
 async def export_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:

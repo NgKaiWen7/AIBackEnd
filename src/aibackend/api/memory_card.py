@@ -13,6 +13,7 @@ from aibackend.models.memory_cards import (
     PromptDomain,
 )
 from aibackend.repositories.memord_card import MemoryCardRepository
+from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.services.memory_card import (
     export_memory_card_images,
     generate_memory_card_images,
@@ -32,17 +33,6 @@ async def generate_memory_card(
     db: AsyncSession = Depends(get_db),
 ) -> MemoryCardResponse:
     return await prompt_memory_card(book_id, style, domain, combine_chunks, db)
-
-
-@router.post("/memory-card")
-async def generate_raptor_memory_card_(
-    book_id: UUID,
-    combine_chunks: bool,
-    style: CardStyle = CardStyle.STUDENT_NOTEBOOK,
-    domain: PromptDomain = PromptDomain.GENERAL,
-    db: AsyncSession = Depends(get_db),
-) -> MemoryCardResponse:
-    return await generate_raptor_memory_card(book_id, style, domain, combine_chunks, db)
 
 @router.post("/memory-card/import", status_code=201)
 async def import_memory_card(
@@ -86,6 +76,19 @@ async def import_memory_card(
 @router.post("/memory-card/queue/images")
 async def queue_images(db: AsyncSession = Depends(get_db)) -> dict:
     return await send_all_image(db)
+
+
+@router.put("/memory-card/cards/{card_id}/image")
+async def update_memory_card_image(
+    card_id: UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)
+) -> dict[str, str]:
+    repo = MemoryCardRepository(db)
+    if await repo.has_card(card_id):
+        image_path = await repo.update_card_image(card_id, file)
+    else:
+        chunk_repo = BookChunkRepository(db)
+        image_path = await chunk_repo.update_chunk_image(str(card_id), file)
+    return {"card_id": str(card_id), "image_path": image_path}
 
 
 @router.post("/memory-card/deck/{deck_id}/images")
@@ -137,33 +140,14 @@ async def export_all_deck(db: AsyncSession = Depends(get_db)) -> dict:
         return_exceptions=True,
     )
 
+    response_results = {}
+    for deck_id, result in zip(deck_ids, results):
+        if isinstance(result, Exception):
+            response_results[str(deck_id)] = {"error": str(result)}
+        else:
+            response_results[str(deck_id)] = result
+
     return {
         "total": len(deck_ids),
-        "results": {
-            str(deck_id): (
-                {"error": str(result)} if isinstance(result, Exception) else result
-            )
-            for deck_id, result in zip(deck_ids, results)
-        },
+        "results": response_results,
     }
-
-
-# @router.put("/memory-card/cards/{card_id}/image")
-# async def update_memory_card_image(
-#     card_id: UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)
-# ) -> dict[str, str]:
-#     repo = MemoryCardRepository(db)
-#     try:
-#         image_path = await repo.update_card_image(card_id, file)
-
-#         return {
-#             "card_id": str(card_id),
-#             "image_path": image_path,
-#         }
-#     except HTTPException:
-#         raise
-#     except Exception as exc:
-#         raise HTTPException(
-#             status_code=500,
-#             detail="Failed to update memory-card image",
-#         ) from exc

@@ -13,13 +13,19 @@ from aibackend.utils.constant import CARD_DECKS_DIR
 class MemoryCardRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.storage_root = CARD_DECKS_DIR
 
     async def commit(self) -> None:
         await self.db.commit()
 
     async def rollback(self) -> None:
         await self.db.rollback()
+
+    async def has_card(self, card_id: UUID) -> bool:
+        result = await self.db.execute(
+            text("SELECT EXISTS(SELECT 1 FROM cards WHERE id = :card_id)"),
+            {"card_id": card_id},
+        )
+        return bool(result.scalar_one())
 
     async def update_queue(self, ids: list[UUID]) -> int:
         if not ids:
@@ -318,7 +324,7 @@ class MemoryCardRepository:
                 detail="Unsupported image format",
             )
 
-        deck_dir = self.storage_root / str(deck_id)
+        deck_dir = CARD_DECKS_DIR / str(deck_id)
         deck_dir.mkdir(parents=True, exist_ok=True)
 
         image_path = deck_dir / f"{card_id}{suffix}"

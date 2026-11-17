@@ -23,6 +23,7 @@ class Chunk(BaseModel):
     raw_text: str
     meta_data: JsonValue = None
     card_path: str | None = None
+    generate: bool = True
     embeddings: list[float] | None = None
     created_at: datetime = Field(default_factory=datetime.now)
 

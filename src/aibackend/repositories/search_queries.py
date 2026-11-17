@@ -19,7 +19,7 @@ class QueryRepository:
         result = await self.db.execute(
             text("""
                 SELECT id, book_id, position, level, raw_text, meta_data,
-                       card_path, created_at,
+                       card_path, generate, created_at,
                        1 - (embeddings <=> CAST(:embedding AS vector)) AS similarity
                 FROM chunks
                 WHERE embeddings IS NOT NULL
@@ -50,7 +50,7 @@ class QueryRepository:
         result = await self.db.execute(
             text("""
                 SELECT id, book_id, position, level, raw_text, meta_data,
-                       card_path, created_at,
+                       card_path, generate, created_at,
                        ts_rank_cd(
                            to_tsvector('english', coalesce(raw_text, '')),
                            websearch_to_tsquery('english', :query)

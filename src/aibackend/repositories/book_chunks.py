@@ -1,6 +1,6 @@
 from uuid import UUID
 import asyncio
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from collections import defaultdict
 from fastapi import HTTPException, UploadFile
@@ -100,7 +100,8 @@ class BookChunkRepository:
                     level,
                     raw_text,
                     meta_data,
-                    card_path
+                    card_path,
+                    generate
                 )
                 VALUES (
                     :book_id,
@@ -108,7 +109,8 @@ class BookChunkRepository:
                     :level,
                     :raw_text,
                     CAST(:meta_data AS jsonb),
-                    :card_path
+                    :card_path,
+                    :generate
                 )
                 RETURNING id
             """),
@@ -121,6 +123,7 @@ class BookChunkRepository:
                     json.dumps(chunk.meta_data) if chunk.meta_data is not None else None
                 ),
                 "card_path": chunk.card_path,
+                "generate": chunk.generate,
             },
         )
         return result.scalar_one()
@@ -293,6 +296,33 @@ class BookChunkRepository:
             {"book_id": book_id},
         )
         return [(row["id"], row["card_path"]) for row in results.mappings()]
+
+    async def queue_image_chunks(self) -> list[tuple[UUID, str]]:
+        result = await self.db.execute(
+            text("""
+                SELECT id, raw_text
+                FROM chunks
+                WHERE level >= 1
+                  AND card_path IS NULL
+                  AND generate = TRUE
+                ORDER BY level, id
+            """)
+        )
+        return [(row["id"], row["raw_text"]) for row in result.mappings()]
+
+    async def update_image_queue(self, ids: list[UUID]) -> int:
+        if not ids:
+            return 0
+        result = await self.db.execute(
+            text("""
+                UPDATE chunks
+                SET generate = FALSE
+                WHERE id IN :ids
+                RETURNING id
+            """).bindparams(bindparam("ids", expanding=True)),
+            {"ids": ids},
+        )
+        return len(result.scalars().all())
 
     async def get_clusters(self, book_id: str) -> list[tuple[str, str]]:
         results = await self.db.execute(

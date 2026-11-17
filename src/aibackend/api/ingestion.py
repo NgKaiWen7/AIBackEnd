@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aibackend.db.connection import get_db
@@ -15,7 +15,6 @@ from aibackend.services.raptor_chunking import (
     export_raptor_images,
 )
 from aibackend.models.memory_cards import CardStyle, PromptDomain
-from aibackend.repositories.book_chunks import BookChunkRepository
 
 router = APIRouter()
 
@@ -85,12 +84,3 @@ async def raptor_memory_cards_(
 @router.post("/raptor/export")
 async def export_raptor(book_id: UUID, db: AsyncSession = Depends(get_db)) -> dict:
     return await export_raptor_images(book_id, db)
-
-
-@router.put("/memory-card/cards/{card_id}/image")
-async def update_memory_card_image(
-    card_id: UUID, file: UploadFile = File(...), db: AsyncSession = Depends(get_db)
-) -> dict[str, str]:
-    repo = BookChunkRepository(db)
-    image_path = await repo.update_chunk_image(str(card_id), file)
-    return {"card_id": str(card_id), "image_path": image_path}
