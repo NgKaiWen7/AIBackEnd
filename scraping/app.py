@@ -43,7 +43,7 @@ RETRY_TIMEOUT_SECONDS = int(os.getenv("GEMINI_RETRY_TIMEOUT", "600"))
 DOWNLOAD_BUTTON_SELECTOR = (
     'md-icon-button.download-button[data-aria-label="Download image"]'
 )
-BACKEND_URL = "http://192.168.0.180:8000"
+BACKEND_URL = "http://192.168.0.180:8001"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SESSION_MAX_SECONDS = 3600
 
@@ -142,6 +142,20 @@ def generate_image(page: Page, concept: MemoryConcept) -> bool:
     return False
 
 
+def log_visible_page_text(page: Page, account_name: str) -> None:
+    """Log the text Playwright can see when account selection fails."""
+    try:
+        visible_text = page.locator("body").inner_text(timeout=5_000).strip()
+        logger.error(
+            "[%s] Account selector failed at %s. Visible page text:\n%s",
+            account_name,
+            page.url,
+            visible_text[:10_000] or "<no visible text>",
+        )
+    except Exception:
+        logger.exception("[%s] Could not collect visible page text", account_name)
+
+
 def run_session(playwright, account: dict, session_seconds: int) -> bool:
     """Run one browser lifetime. Returns True to shut down, False to restart the browser."""
     name = account["name"]
@@ -164,10 +178,13 @@ def run_session(playwright, account: dict, session_seconds: int) -> bool:
         page = context.pages[0] if context.pages else context.new_page()
         page.bring_to_front()
         page.goto(URL, wait_until="domcontentloaded")
+        account_selector = page.get_by_text(name).first
         try:
-            page.get_by_text(name).first.click(timeout=10_000)
+            account_selector.hover(timeout=20_000)
+            account_selector.click(timeout=20_000)
         except Exception:
-            logger.info("Account selection was not required")
+            log_visible_page_text(page, name)
+            raise
 
         worker_ready[name].set()
         logger.info("[%s] Browser session started", name)
