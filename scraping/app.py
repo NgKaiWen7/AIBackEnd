@@ -7,11 +7,14 @@ import queue
 import shutil
 import threading
 import time
+from concurrent.futures import Future
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from playwright.sync_api import Page, sync_playwright
@@ -21,6 +24,12 @@ from pydantic import BaseModel
 class MemoryConcept(BaseModel):
     id: UUID
     prompt: str
+
+
+@dataclass(slots=True)
+class GenerationTask:
+    concept: MemoryConcept
+    completion: Future[bool]
 
 
 logging.basicConfig(
@@ -34,21 +43,17 @@ ACCOUNTS = [
     {"name": "NG KAI WEN", "profile_dir": Path("./my_profile")},
     {"name": "NG YONG SHENG", "profile_dir": Path("./ys_profile")},
 ]
-account_queues = {account["name"]: queue.Queue() for account in ACCOUNTS}
 worker_ready = {account["name"]: threading.Event() for account in ACCOUNTS}
 worker_errors = {}
 DATA_DIR = Path(__file__).resolve().parent / "browser_agent_output"
 PROMPT_TIMEOUT_SECONDS = int(os.getenv("GEMINI_PROMPT_TIMEOUT", "300"))
-RETRY_TIMEOUT_SECONDS = int(os.getenv("GEMINI_RETRY_TIMEOUT", "600"))
 DOWNLOAD_BUTTON_SELECTOR = (
     'md-icon-button.download-button[data-aria-label="Download image"]'
 )
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-SESSION_MAX_SECONDS = 3600
+SESSION_MAX_SECONDS = 60 * 60
 
-job_queue: queue.Queue[list[MemoryConcept] | None] = queue.Queue()
-worker_start_error: BaseException | None = None
-worker_thread: threading.Thread | None = None
+job_queue: queue.Queue[GenerationTask | None] = queue.Queue()
 
 
 def clear_profile_cache(profile_dir: Path) -> None:
@@ -194,19 +199,24 @@ def run_session(playwright, account: dict, session_seconds: int) -> bool:
                 return False
 
             try:
-                concepts = job_queue.get(timeout=5)
+                task = job_queue.get(timeout=5)
             except queue.Empty:
                 continue
 
             try:
-                if concepts is None:
+                if task is None:
                     return True
-                for concept in concepts:
-                    generate_image(page=page, concept=concept)
+                success = generate_image(page=page, concept=task.concept)
+                task.completion.set_result(success)
+            except BaseException as exc:
+                if task is not None and not task.completion.done():
+                    task.completion.set_exception(exc)
+                raise
             finally:
                 job_queue.task_done()
     finally:
         context.close()  # kills Chromium and frees Playwright's temp downloads
+
 
 def playwright_worker(account: dict, index: int = 0) -> None:
     name = account["name"]
@@ -230,15 +240,16 @@ def playwright_worker(account: dict, index: int = 0) -> None:
 
         clear_profile_cache(account["profile_dir"])
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start one persistent Playwright worker per account."""
     workers = []
 
-    for account in ACCOUNTS:
+    for index, account in enumerate(ACCOUNTS):
         thread = threading.Thread(
             target=playwright_worker,
-            args=(account,),
+            args=(account, index),
             name=f"image-worker-{account['name']}",
             daemon=True,
         )
@@ -265,9 +276,9 @@ async def lifespan(app: FastAPI):
         yield
 
     finally:
-        # Send a shutdown sentinel to each independent queue.
-        for account in ACCOUNTS:
-            account_queues[account["name"]].put(None)
+        # Send one shutdown sentinel for each worker consuming the shared queue.
+        for _ in workers:
+            job_queue.put(None)
 
         # Wait for workers without blocking the FastAPI event loop.
         await asyncio.gather(
@@ -285,7 +296,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Gemini Memory Card Image Service",
     version="1.0.0",
-    description="Upload JSON and generate images in the background.",
+    description="Generate images and wait for every requested file to finish.",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -298,40 +309,50 @@ def root():
     return {
         "service": "Gemini Memory Card Image Service",
         "status": "running",
+        "generation_endpoint": "POST /generate",
         "image_endpoint": "GET /generated-images/{image_id}",
         "docs": "/docs",
     }
 
 
-@app.get("/queue")
-async def get_queue() -> dict[str, int]:
-    """Return the current image-generation queue statistics."""
-
-    with job_queue.mutex:
-        jobs = list(job_queue.queue)
-
-    return {
-        "queue_size": len(jobs),
-        "prompt_count": sum(len(job) for job in jobs),
-    }
-
-
-@app.post("/generate", status_code=202)
+@app.post("/generate")
 async def generate_cards(request: list[MemoryConcept]) -> dict[str, Any]:
-    """Validate and queue concepts for background image generation."""
+    """Wait until every requested image has been written to disk."""
     if not request:
         raise HTTPException(
             status_code=422,
             detail="At least one concept is required.",
         )
 
-    for req in request:
-        job_queue.put([req])
+    tasks = [
+        GenerationTask(concept=concept, completion=Future())
+        for concept in request
+    ]
+    for task in tasks:
+        job_queue.put(task)
+
+    results = await asyncio.gather(
+        *(asyncio.wrap_future(task.completion) for task in tasks),
+        return_exceptions=True,
+    )
+    generated = [
+        str(task.concept.id)
+        for task, result in zip(tasks, results)
+        if result is True
+    ]
+    failed = [
+        str(task.concept.id)
+        for task, result in zip(tasks, results)
+        if result is not True
+    ]
 
     return {
-        "accepted": True,
-        "concepts": len(request),
-        "card_ids": [str(req.id) for req in request],
+        "completed": True,
+        "requested_count": len(request),
+        "generated_count": len(generated),
+        "failed_count": len(failed),
+        "generated": generated,
+        "failed": failed,
     }
 
 
@@ -378,6 +399,6 @@ async def delete_generated_image(image_id: UUID) -> dict[str, int | str]:
 
     return {"image_id": str(image_id), "deleted_count": len(images)}
 
-import uvicorn
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

@@ -16,9 +16,9 @@ from aibackend.repositories.memord_card import MemoryCardRepository
 from aibackend.repositories.book_chunks import BookChunkRepository
 from aibackend.services.memory_card import (
     export_memory_card_images,
+    generate_and_store_images,
     generate_memory_card_images,
     prompt_memory_card,
-    send_all_image,
 )
 
 router = APIRouter()
@@ -73,9 +73,10 @@ async def import_memory_card(
     return deck
 
 
-@router.post("/memory-card/queue/images")
-async def queue_images(db: AsyncSession = Depends(get_db)) -> dict:
-    return await send_all_image(db)
+@router.post("/memory-card/images")
+async def generate_all_images(db: AsyncSession = Depends(get_db)) -> dict:
+    """Wait for all pending images to be generated and stored."""
+    return await generate_and_store_images(db)
 
 
 @router.put("/memory-card/cards/{card_id}/image")

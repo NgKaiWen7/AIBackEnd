@@ -324,20 +324,6 @@ class BookChunkRepository:
         )
         return [(row["id"], row["raw_text"]) for row in result.mappings()]
 
-    async def get_pending_image_ids(self) -> list[UUID]:
-        """Return chunks already submitted for generation but not stored locally."""
-        result = await self.db.execute(
-            text("""
-                SELECT id
-                FROM chunks
-                WHERE level >= 1
-                  AND card_path IS NULL
-                  AND generate = FALSE
-                ORDER BY level, id
-            """)
-        )
-        return list(result.scalars().all())
-
     async def update_image_queue(self, ids: list[UUID]) -> int:
         if not ids:
             return 0

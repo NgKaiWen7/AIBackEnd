@@ -210,10 +210,10 @@ async def prompt_memory_card(
 async def pull_generated_images(
     card_repo: MemoryCardRepository,
     chunk_repo: BookChunkRepository,
+    card_ids: list[UUID],
+    chunk_ids: list[UUID],
 ) -> dict[str, Any]:
-    """Fetch generated images by ID and store them on the backend host."""
-    card_ids = await card_repo.get_pending_image_ids()
-    chunk_ids = await chunk_repo.get_pending_image_ids()
+    """Fetch explicitly completed images and store them on the backend host."""
     targets = [(image_id, "card") for image_id in card_ids]
     targets.extend((image_id, "chunk") for image_id in chunk_ids)
 
@@ -261,11 +261,50 @@ async def pull_generated_images(
     }
 
 
-async def send_all_image(db: AsyncSession) -> dict[str, Any]:
-    """Pull completed images, then queue pending deck cards and chunks."""
+async def request_image_generation(concepts: list[dict[str, str]]) -> dict[str, Any]:
+    """Wait for the scraper to finish every submitted generation task."""
+    try:
+        timeout = httpx.Timeout(None, connect=30.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{COMPUTE_SERVER_URL}/generate",
+                json=concepts,
+            )
+            response.raise_for_status()
+        result = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Timed out connecting to the image-generation server",
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The image-generation server rejected the request",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to the image-generation server",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The image-generation server returned invalid JSON",
+        ) from exc
+
+    if not isinstance(result, dict) or not isinstance(result.get("generated"), list):
+        raise HTTPException(
+            status_code=502,
+            detail="The image-generation server returned an invalid response",
+        )
+    return result
+
+
+async def generate_and_store_images(db: AsyncSession) -> dict[str, Any]:
+    """Wait for image generation and store every completed image before returning."""
     repo = MemoryCardRepository(db)
     chunk_repo = BookChunkRepository(db)
-    pull_result = await pull_generated_images(repo, chunk_repo)
     card_decks = await repo.queue_all()
     chunks = await chunk_repo.queue_image_chunks()
 
@@ -289,42 +328,62 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
         for chunk_id, raw_text in chunks
     )
 
-    # Submit concepts to the image-generation server.
-    if len(concepts) > 0:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{COMPUTE_SERVER_URL}/generate",
-                json=concepts,
-            )
-            response.raise_for_status()
-        await repo.update_queue(
-            [concept.id for deck in card_decks for concept in deck.concepts]
-        )
-        await chunk_repo.update_image_queue([chunk_id for chunk_id, _ in chunks])
-        await db.commit()
-        try:
-            generation_result = response.json()
-        except ValueError:
-            generation_result = response.text
-
+    if not concepts:
         return {
             "status": "success",
             "stats": {
-                "decks_found": len(card_decks),
-                "chunks_submitted": len(chunks),
-                "concepts_submitted": len(concepts),
-                "decks": deck_stats,
+                "decks_found": 0,
+                "chunks_submitted": 0,
+                "concepts_submitted": 0,
             },
-            "images_pulled": pull_result,
-            "generation": {
-                "status_code": response.status_code,
-                "result": generation_result,
+            "images_stored": {
+                "requested_count": 0,
+                "stored_count": 0,
+                "missing_count": 0,
+                "failed_count": 0,
+                "stored": [],
+                "missing": [],
+                "failed": [],
             },
         }
+
+    # Release the read transaction while the browser workers are running.
+    await db.commit()
+    generation_result = await request_image_generation(concepts)
+
+    requested_card_ids = {
+        concept.id for deck in card_decks for concept in deck.concepts
+    }
+    requested_chunk_ids = {chunk_id for chunk_id, _ in chunks}
+    generated_ids = {
+        UUID(image_id) for image_id in generation_result.get("generated", [])
+    }
+    generated_card_ids = sorted(requested_card_ids & generated_ids, key=str)
+    generated_chunk_ids = sorted(requested_chunk_ids & generated_ids, key=str)
+
+    store_result = await pull_generated_images(
+        repo,
+        chunk_repo,
+        generated_card_ids,
+        generated_chunk_ids,
+    )
+    stored_ids = {UUID(image_id) for image_id in store_result["stored"]}
+    await repo.update_queue(list(requested_card_ids & stored_ids))
+    await chunk_repo.update_image_queue(list(requested_chunk_ids & stored_ids))
+    await db.commit()
+
+    completed_count = store_result["stored_count"]
     return {
-        "status": "success",
-        "stats": {"decks_found": 0, "chunks_submitted": 0},
-        "images_pulled": pull_result,
+        "status": "success" if completed_count == len(concepts) else "partial",
+        "stats": {
+            "decks_found": len(card_decks),
+            "chunks_submitted": len(chunks),
+            "concepts_submitted": len(concepts),
+            "images_stored": completed_count,
+            "decks": deck_stats,
+        },
+        "images_stored": store_result,
+        "generation": generation_result,
     }
 
 
@@ -400,27 +459,32 @@ async def generate_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:
         )
 
     concepts = format_prompt(card_deck)
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{COMPUTE_SERVER_URL}/generate", json=concepts
-            )
-            response.raise_for_status()
+    if not concepts:
+        raise HTTPException(status_code=404, detail="No memory cards found in deck")
 
-    except httpx.TimeoutException as exc:
-        raise HTTPException(
-            status_code=504,
-            detail="Timed out waiting for the computing server",
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="The computing server rejected the generation request",
-        ) from exc
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail="Could not connect to the computing server",
-        ) from exc
+    await db.commit()
+    generation_result = await request_image_generation(concepts)
+    requested_ids = {concept.id for concept in card_deck.concepts}
+    generated_ids = {
+        UUID(image_id) for image_id in generation_result.get("generated", [])
+    }
+    store_result = await pull_generated_images(
+        repo,
+        BookChunkRepository(db),
+        sorted(requested_ids & generated_ids, key=str),
+        [],
+    )
+    stored_ids = {UUID(image_id) for image_id in store_result["stored"]}
+    await repo.update_queue(list(requested_ids & stored_ids))
+    await db.commit()
 
-    return response.json()
+    return {
+        "status": (
+            "success"
+            if store_result["stored_count"] == len(concepts)
+            else "partial"
+        ),
+        "deck_id": str(deck_id),
+        "images_stored": store_result,
+        "generation": generation_result,
+    }

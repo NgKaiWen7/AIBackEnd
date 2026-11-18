@@ -27,19 +27,6 @@ class MemoryCardRepository:
         )
         return bool(result.scalar_one())
 
-    async def get_pending_image_ids(self) -> list[UUID]:
-        """Return cards already submitted for generation but not stored locally."""
-        result = await self.db.execute(
-            text("""
-                SELECT id
-                FROM cards
-                WHERE image_path IS NULL
-                  AND generate = FALSE
-                ORDER BY id
-            """)
-        )
-        return list(result.scalars().all())
-
     async def update_queue(self, ids: list[UUID]) -> int:
         if not ids:
             return 0

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from umap import UMAP
 from aibackend.models.chunking import Chunk, Cluster
 from aibackend.repositories.book_chunks import BookChunkRepository
-from aibackend.services.memory_card import send_all_image
+from aibackend.services.memory_card import generate_and_store_images
 from aibackend.services.chunking import ingest_book
 from aibackend.utils.embed import get_embedding
 from aibackend.models.memory_cards import PromptDomain, CardStyle
@@ -281,10 +281,9 @@ async def raptor_memory_cards(
     book = await bookchunk_repo.get_book(book_id)
     if book is None:
         raise ValueError(f"Book id: {book_id} not found")
-    # Image jobs are now stored directly on chunks and processed by the shared
-    # scheduler/queue. Style and domain remain accepted for API compatibility.
+    # Style and domain remain accepted for API compatibility.
     del style, domain
-    return await send_all_image(db)
+    return await generate_and_store_images(db)
 
 
 async def export_raptor_images(book_id: UUID, db: AsyncSession) -> dict:
