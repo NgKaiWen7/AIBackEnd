@@ -207,17 +207,65 @@ async def prompt_memory_card(
     return result
 
 
-async def send_all_image(db: AsyncSession) -> dict[str, Any]:
-    """Upload completed images, then queue pending deck cards and chunks."""
-    # Upload previously generated images first.
-    async with httpx.AsyncClient(timeout=300) as client:
-        upload_response = await client.post(
-            "http://localhost:8000/upload-generated-images"
-        )
-        upload_response.raise_for_status()
+async def pull_generated_images(
+    card_repo: MemoryCardRepository,
+    chunk_repo: BookChunkRepository,
+) -> dict[str, Any]:
+    """Fetch generated images by ID and store them on the backend host."""
+    card_ids = await card_repo.get_pending_image_ids()
+    chunk_ids = await chunk_repo.get_pending_image_ids()
+    targets = [(image_id, "card") for image_id in card_ids]
+    targets.extend((image_id, "chunk") for image_id in chunk_ids)
 
+    stored: list[str] = []
+    missing: list[str] = []
+    failed: list[dict[str, str]] = []
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for image_id, image_type in targets:
+            image_url = f"{COMPUTE_SERVER_URL}/generated-images/{image_id}"
+            try:
+                response = await client.get(image_url)
+                if response.status_code == 404:
+                    missing.append(str(image_id))
+                    continue
+                response.raise_for_status()
+
+                suffix = response.headers.get("X-Image-Extension", "").lower()
+                if image_type == "card":
+                    await card_repo.save_card_image(
+                        image_id, response.content, suffix
+                    )
+                else:
+                    await chunk_repo.save_chunk_image(
+                        image_id, response.content, suffix
+                    )
+
+                # Acknowledge only after the host has saved the file and DB path.
+                delete_response = await client.delete(image_url)
+                if delete_response.status_code != 404:
+                    delete_response.raise_for_status()
+                stored.append(str(image_id))
+            except Exception as exc:
+                logger.exception("Failed to pull generated image %s", image_id)
+                failed.append({"id": str(image_id), "error": str(exc)})
+
+    return {
+        "requested_count": len(targets),
+        "stored_count": len(stored),
+        "missing_count": len(missing),
+        "failed_count": len(failed),
+        "stored": stored,
+        "missing": missing,
+        "failed": failed,
+    }
+
+
+async def send_all_image(db: AsyncSession) -> dict[str, Any]:
+    """Pull completed images, then queue pending deck cards and chunks."""
     repo = MemoryCardRepository(db)
     chunk_repo = BookChunkRepository(db)
+    pull_result = await pull_generated_images(repo, chunk_repo)
     card_decks = await repo.queue_all()
     chunks = await chunk_repo.queue_image_chunks()
 
@@ -259,11 +307,6 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
         except ValueError:
             generation_result = response.text
 
-        try:
-            upload_result = upload_response.json()
-        except ValueError:
-            upload_result = upload_response.text
-
         return {
             "status": "success",
             "stats": {
@@ -272,16 +315,17 @@ async def send_all_image(db: AsyncSession) -> dict[str, Any]:
                 "concepts_submitted": len(concepts),
                 "decks": deck_stats,
             },
-            "upload": {
-                "status_code": upload_response.status_code,
-                "result": upload_result,
-            },
+            "images_pulled": pull_result,
             "generation": {
                 "status_code": response.status_code,
                 "result": generation_result,
             },
         }
-    return {"status": "success", "stats": {"decks_found": 0, "chunks_submitted": 0}}
+    return {
+        "status": "success",
+        "stats": {"decks_found": 0, "chunks_submitted": 0},
+        "images_pulled": pull_result,
+    }
 
 
 async def export_memory_card_images(deck_id: UUID, db: AsyncSession) -> dict:

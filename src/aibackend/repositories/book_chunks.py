@@ -200,12 +200,22 @@ class BookChunkRepository:
             {"id": id, "summary": summary},
         )
 
-    async def update_chunk_image(self, id: str, file: UploadFile):
+    async def update_chunk_image(self, id: str, file: UploadFile) -> str:
         suffix = Path(file.filename or "").suffix.lower()
+        try:
+            content = await file.read()
+        finally:
+            await file.close()
+
+        return await self.save_chunk_image(UUID(id), content, suffix)
+
+    async def save_chunk_image(
+        self, chunk_id: UUID, content: bytes, suffix: str
+    ) -> str:
+        """Save chunk image bytes fetched by the backend from the scraper."""
         allowed_extensions = {".png", ".jpg", ".jpeg", ".webp"}
         if suffix not in allowed_extensions:
             raise HTTPException(status_code=400, detail="Unsupported image format")
-        content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded image is empty")
         try:
@@ -216,19 +226,23 @@ class BookChunkRepository:
                     WHERE id = :id
                     FOR UPDATE
                 """),
-                {"id": id},
+                {"id": chunk_id},
             )
             row = result.mappings().one_or_none()
             if row is None:
                 raise HTTPException(status_code=404, detail="Memory card not found")
-            card_path = RAPTOR_CARD_DECKS_DIR / str(row["book_id"]) / f"{id}{suffix}"
+            card_path = (
+                RAPTOR_CARD_DECKS_DIR
+                / str(row["book_id"])
+                / f"{chunk_id}{suffix}"
+            )
             await self.db.execute(
                 text("""
                     UPDATE chunks
                     SET card_path = :card_path
                     WHERE id = :id
                 """),
-                {"id": id, "card_path": str(card_path)},
+                {"id": chunk_id, "card_path": str(card_path.resolve())},
             )
             card_path.parent.mkdir(parents=True, exist_ok=True)
             await asyncio.to_thread(card_path.write_bytes, content)
@@ -236,7 +250,7 @@ class BookChunkRepository:
         except Exception:
             await self.db.rollback()
             raise
-        return str(card_path)
+        return str(card_path.resolve())
 
     async def get_cluster_leafs(self, book_id: str, level: int) -> dict[str, str]:
         await self.db.execute(text("LOAD 'age';"))
@@ -309,6 +323,20 @@ class BookChunkRepository:
             """)
         )
         return [(row["id"], row["raw_text"]) for row in result.mappings()]
+
+    async def get_pending_image_ids(self) -> list[UUID]:
+        """Return chunks already submitted for generation but not stored locally."""
+        result = await self.db.execute(
+            text("""
+                SELECT id
+                FROM chunks
+                WHERE level >= 1
+                  AND card_path IS NULL
+                  AND generate = FALSE
+                ORDER BY level, id
+            """)
+        )
+        return list(result.scalars().all())
 
     async def update_image_queue(self, ids: list[UUID]) -> int:
         if not ids:

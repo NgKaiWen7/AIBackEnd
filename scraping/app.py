@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from playwright.sync_api import Page, sync_playwright
 from pydantic import BaseModel
 
@@ -37,13 +37,12 @@ ACCOUNTS = [
 account_queues = {account["name"]: queue.Queue() for account in ACCOUNTS}
 worker_ready = {account["name"]: threading.Event() for account in ACCOUNTS}
 worker_errors = {}
-DATA_DIR = Path("./browser_agent_output")
+DATA_DIR = Path(__file__).resolve().parent / "browser_agent_output"
 PROMPT_TIMEOUT_SECONDS = int(os.getenv("GEMINI_PROMPT_TIMEOUT", "300"))
 RETRY_TIMEOUT_SECONDS = int(os.getenv("GEMINI_RETRY_TIMEOUT", "600"))
 DOWNLOAD_BUTTON_SELECTOR = (
     'md-icon-button.download-button[data-aria-label="Download image"]'
 )
-BACKEND_URL = "http://192.168.0.180:8001"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 SESSION_MAX_SECONDS = 3600
 
@@ -299,7 +298,7 @@ def root():
     return {
         "service": "Gemini Memory Card Image Service",
         "status": "running",
-        "upload_endpoint": "POST /upload",
+        "image_endpoint": "GET /generated-images/{image_id}",
         "docs": "/docs",
     }
 
@@ -336,61 +335,49 @@ async def generate_cards(request: list[MemoryConcept]) -> dict[str, Any]:
     }
 
 
-@app.post("/upload-generated-images")
-async def upload_generated_images() -> dict:
-    """Upload generated images and delete local files after successful upload."""
-
+def find_generated_images(image_id: UUID) -> list[Path]:
+    """Find completed files for an exact card or chunk UUID."""
     if not DATA_DIR.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Image directory not found: {DATA_DIR.resolve()}",
-        )
+        return []
 
-    images = [
-        path
-        for path in DATA_DIR.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-    ]
+    return sorted(
+        (
+            path
+            for path in DATA_DIR.rglob(f"{image_id}.*")
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
 
-    uploaded = []
-    failed = []
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for image_path in images:
-            try:
-                card_id = UUID(image_path.stem)
+@app.get("/generated-images/{image_id}", response_class=FileResponse)
+async def get_generated_image(image_id: UUID) -> FileResponse:
+    """Return the newest completed image matching the requested UUID."""
+    images = await asyncio.to_thread(find_generated_images, image_id)
+    if not images:
+        raise HTTPException(status_code=404, detail="Generated image not found")
 
-                with image_path.open("rb") as image_file:
-                    response = await client.put(
-                        f"{BACKEND_URL}/memory-card/cards/{card_id}/image",
-                        files={
-                            "file": (
-                                image_path.name,
-                                image_file,
-                                "application/octet-stream",
-                            )
-                        },
-                    )
+    image_path = images[0]
+    return FileResponse(
+        image_path,
+        filename=image_path.name,
+        headers={"X-Image-Extension": image_path.suffix.lower()},
+    )
 
-                response.raise_for_status()
 
-                # Delete only after the backend confirms success.
-                image_path.unlink()
-                uploaded.append(str(card_id))
+@app.delete("/generated-images/{image_id}")
+async def delete_generated_image(image_id: UUID) -> dict[str, int | str]:
+    """Delete an image only after the backend confirms it was stored."""
+    images = await asyncio.to_thread(find_generated_images, image_id)
+    if not images:
+        raise HTTPException(status_code=404, detail="Generated image not found")
 
-            except Exception as exc:
-                logger.exception("Failed to upload image: %s", image_path)
-                failed.append(
-                    {
-                        "file": str(image_path),
-                        "error": str(exc),
-                    }
-                )
+    for image_path in images:
+        await asyncio.to_thread(image_path.unlink)
 
-    return {
-        "total_images": len(images),
-        "uploaded_count": len(uploaded),
-        "failed_count": len(failed),
-        "uploaded": uploaded,
-        "failed": failed,
-    }
+    return {"image_id": str(image_id), "deleted_count": len(images)}
+
+import uvicorn
+if __name__ == "__main__":
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)

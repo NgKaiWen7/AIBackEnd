@@ -27,6 +27,19 @@ class MemoryCardRepository:
         )
         return bool(result.scalar_one())
 
+    async def get_pending_image_ids(self) -> list[UUID]:
+        """Return cards already submitted for generation but not stored locally."""
+        result = await self.db.execute(
+            text("""
+                SELECT id
+                FROM cards
+                WHERE image_path IS NULL
+                  AND generate = FALSE
+                ORDER BY id
+            """)
+        )
+        return list(result.scalars().all())
+
     async def update_queue(self, ids: list[UUID]) -> int:
         if not ids:
             return 0
@@ -293,7 +306,25 @@ class MemoryCardRepository:
         return deleted_count
 
     async def update_card_image(self, card_id: UUID, file: UploadFile) -> str:
-        """Save a card image under its deck folder and update its path."""
+        """Save an uploaded card image under its deck folder."""
+        suffix = Path(file.filename or "").suffix.lower()
+        try:
+            content = await file.read()
+        finally:
+            await file.close()
+
+        return await self.save_card_image(card_id, content, suffix)
+
+    async def save_card_image(
+        self, card_id: UUID, content: bytes, suffix: str
+    ) -> str:
+        """Save card image bytes fetched by the backend from the scraper."""
+
+        allowed_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+        if suffix not in allowed_extensions:
+            raise HTTPException(status_code=400, detail="Unsupported image format")
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded image is empty")
 
         result = await self.db.execute(
             text("""
@@ -314,30 +345,12 @@ class MemoryCardRepository:
 
         deck_id = row["deck_id"]
 
-        # Restrict extensions rather than trusting arbitrary filenames.
-        suffix = Path(file.filename or "").suffix.lower()
-        allowed_extensions = {".png", ".jpg", ".jpeg", ".webp"}
-
-        if suffix not in allowed_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported image format",
-            )
-
         deck_dir = CARD_DECKS_DIR / str(deck_id)
         deck_dir.mkdir(parents=True, exist_ok=True)
 
         image_path = deck_dir / f"{card_id}{suffix}"
 
         try:
-            content = await file.read()
-
-            if not content:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Uploaded image is empty",
-                )
-
             await asyncio.to_thread(image_path.write_bytes, content)
 
             await self.db.execute(
@@ -364,5 +377,3 @@ class MemoryCardRepository:
                 await asyncio.to_thread(image_path.unlink)
 
             raise
-        finally:
-            await file.close()
